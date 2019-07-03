@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+#!/usr/bin/python3
 
 import os, sys, subprocess
 import struct
@@ -38,48 +38,30 @@ class DNSRelay:
     def Start(self):
          
         threading.Thread(target=self.TLSQueryQueue).start()    
-        threading.Thread(target=self.Main).start()
+        self.Main()
 
-    def Main(self):       
+    def Main(self):
         self.sock = socket(AF_INET, SOCK_DGRAM)
         self.sock.bind((SERVER_ADDRESS, DNS_PORT))
-        self.sock.settimeout(10)
 
         print(f'[+] Listening -> {SERVER_ADDRESS}:{DNS_PORT}')
-        try:
-            while True:
+        while True:
+            try:
                 data_from_client, client_address = self.sock.recvfrom(1024)
-                if (not data_from_client):
-                    print('MAIN: NO DATA')
-                    break
-#            if (data_from_client):
-#                try:
-#                print(f'Recieved Request {client_address[0]}:{client_address[1]}')
-                packet = PacketManipulation(data_from_client, protocol=UDP)
-                packet.Parse()
-            ## Matching IPV4 DNS queries only. All other will be dropped. Then creating a thread
-            ## to handle the rest of the process and sending client data in for relay to dns server        
-                if (packet.qtype == 1):
-                    if (self.protocol == TCP):
-                        self.TLSQueue(data_from_client, client_address)
-        except timeout:
-            with open('wtf_log.txt', 'a+') as log:
-                timestamp = self.LogTime()
-                log.write(f'{timestamp} | MAIN SOCKET TIMEOUT! ://\n')
-        except Exception as E:
-            traceback.print_exc()
-            print(f'MAIN: {E}')
-            with open('wtf_log.txt', 'a+') as log:
-                timestamp = self.LogTime()
-                log.write(f'{timestamp} | MAIN SOCKET EXCEPTION! | {E} ://\n')
-        
-        self.sock.close()            
-        print('MAIN SOCKET FUCKED UP!!! :////')
-        with open('wtf_log.txt', 'a+') as log:
-            timestamp = self.LogTime()
-            log.write(f'{timestamp} | MAIN SOCKET FUCKIN UP. RECURSIVE CALL BACK! ://\n')
-            
-        self.Main()
+                if (data_from_client):
+                    packet = PacketManipulation(data_from_client, protocol=UDP)
+                    packet.Parse()
+                    ## Matching IPV4 DNS queries only. All other will be dropped. Then creating a thread
+                    ## to handle the rest of the process and sending client data in for relay to dns server        
+                    if (packet.qtype == 1):
+                        if (self.protocol == TCP):
+                            self.TLSQueue(data_from_client, client_address)
+
+            except Exception as E:
+                traceback.print_exc()
+                with open('wtf_log.txt', 'a+') as log:
+                    timestamp = self.LogTime()
+                    log.write(f'{timestamp} | MAIN SOCKET EXCEPTION! | {E} ://\n')
             
     def UDPRelay(self, data_from_client, client_address, fallback=False):
         sock = socket(AF_INET, SOCK_DGRAM)
