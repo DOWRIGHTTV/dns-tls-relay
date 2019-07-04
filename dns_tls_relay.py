@@ -56,7 +56,14 @@ class DNSRelay:
                     if (packet.qtype == 1):
                         if (self.protocol == TCP):
                             self.TLSQueue(data_from_client, client_address)
-
+            except IndexError as IE:
+                traceback.print_exc()
+                with open('wtf_log.txt', 'a+') as log:
+                    timestamp = self.LogTime()
+                    log.write(f'{timestamp} | MAIN SOCKET EXCEPTION! | {IE} ://\n')
+                    log.write(f'{timestamp} -----------------------------------\n')
+                    log.write(f'{timestamp} | {data_from_client} ://\n')
+                    log.write(f'{timestamp} -----------------------------------\n')            
             except Exception as E:
                 traceback.print_exc()
                 with open('wtf_log.txt', 'a+') as log:
