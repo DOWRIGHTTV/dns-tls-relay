@@ -48,6 +48,7 @@ class DNSRelay:
         while True:
             try:
                 data_from_client, client_address = self.sock.recvfrom(1024)
+                print('Receved data from client.')
                 if (data_from_client):
                     packet = PacketManipulation(data_from_client, protocol=UDP)
                     packet.Parse()
@@ -112,6 +113,7 @@ class DNSRelay:
             try:
                 secure_socket = None
                 msg_queue = list(self.dns_tls_queue)
+                print(msg_queue)
                 if (msg_queue):
                     for secure_server, server_info in self.dns_servers.items():
                         now = time.time()
@@ -133,7 +135,7 @@ class DNSRelay:
                         try:
                             timestamp = self.FormatTime()
                             secure_socket.send(message)
-                            print(f'{timestamp} | SENT:', struct.unpack('!H', message[2:4])[0])
+#                            print(f'{timestamp} | SENT:', struct.unpack('!H', message[2:4])[0])
     #                        print('Secure Request Relayed to DNS over TLS Server.')
                             self.dns_tls_queue.pop(0)                  
                         except Exception as E:
@@ -159,7 +161,7 @@ class DNSRelay:
                 tcp_dns_id = packet.DNS()
 #                    print(f'Secure Request Received from Server. DNS ID: {tcp_dns_id}')
                 timestamp = self.FormatTime()
-                print(f'{timestamp} | RECEIVED:', tcp_dns_id)
+#                print(f'{timestamp} | RECEIVED:', tcp_dns_id)
                 # Checking client DNS ID and Address info to relay query back to host
                 client_dns_id = self.dns_connection_tracker[tcp_dns_id]['Client ID']
                 client_address = self.dns_connection_tracker[tcp_dns_id]['Client Address']
@@ -234,7 +236,7 @@ class DNSRelay:
                 # as false. If successful connect will break while loop and allow queue handler to
                 # send DNS query
 
-                print(f'Opening Secure socket to {secure_server}: 853')
+#                print(f'Opening Secure socket to {secure_server}: 853')
                 secure_socket = context.wrap_socket(sock, server_hostname=secure_server)
                 secure_socket.connect((secure_server, DNS_TLS_PORT))
                 #print(self.secure_socket.getpeercert())
