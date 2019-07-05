@@ -105,7 +105,7 @@ class DNSRelay:
         ## Adding client connection info to tracker to be used by response handler
         self.dns_connection_tracker.update({tcp_dns_id: {'Client ID': client_dns_id, 'Client Address': client_address}})
         timestamp = self.FormatTime()
-        print(f'{timestamp} | ADDED:', struct.unpack('!H', dns_payload[2:4])[0])
+#        print(f'{timestamp} | ADDED:', struct.unpack('!H', dns_payload[2:4])[0])
         self.dns_tls_queue.append(dns_payload)
 
     def TLSQueryQueue(self):
