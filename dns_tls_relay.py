@@ -48,7 +48,7 @@ class DNSRelay:
         while True:
             try:
                 data_from_client, client_address = self.sock.recvfrom(1024)
-                print('Receved data from client.')
+                print(f'Receved data from client: {data_from_client}.')
                 if (data_from_client):
                     packet = PacketManipulation(data_from_client, protocol=UDP)
                     packet.Parse()
