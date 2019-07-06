@@ -57,20 +57,24 @@ class DNSRelay:
                     if (packet.qtype == 1):
                         if (self.protocol == TCP):
                             self.TLSQueue(data_from_client, client_address)
+                else:
+                    timestamp = self.LogTime()
+                    with open('wtf_log.txt', 'a+') as log:
+                        log.write(f'{timestamp} | NO DATA FROM MAIN SOCKET :///')
             except IndexError as IE:
                 traceback.print_exc()
+                timestamp = self.LogTime()
                 with open('wtf_log.txt', 'a+') as log:
-                    timestamp = self.LogTime()
                     log.write(f'{timestamp} | MAIN SOCKET EXCEPTION! | {IE} ://\n')
                     log.write(f'{timestamp} -----------------------------------\n')
                     log.write(f'{timestamp} | {data_from_client} ://\n')
                     log.write(f'{timestamp} -----------------------------------\n')            
             except Exception as E:
                 traceback.print_exc()
+                timestamp = self.LogTime()
                 with open('wtf_log.txt', 'a+') as log:
-                    timestamp = self.LogTime()
                     log.write(f'{timestamp} | MAIN SOCKET EXCEPTION! | {E} ://\n')
-            
+
     def UDPRelay(self, data_from_client, client_address, fallback=False):
         sock = socket(AF_INET, SOCK_DGRAM)
         ## -------------- ##
@@ -126,7 +130,7 @@ class DNSRelay:
                         ##Fallback to UDP if configured ||||ASDFASFGASDFAS FFSGDFGXDSDG SDGVSDFG SD
                         if (self.udp_fallback):
                             pass
-                
+
                 if (secure_socket):
                     msg_count = len(msg_queue)
                     threading.Thread(target=self.TLSResponseHandler, args=(secure_socket, msg_count)).start()
@@ -137,11 +141,11 @@ class DNSRelay:
                             secure_socket.send(message)
 #                            print(f'{timestamp} | SENT:', struct.unpack('!H', message[2:4])[0])
     #                        print('Secure Request Relayed to DNS over TLS Server.')
-                            self.dns_tls_queue.pop(0)                  
+                            self.dns_tls_queue.pop(0)
                         except Exception as E:
                             traceback.print_exc()
                             print(f'SEND: {E}')
-                time.sleep(.05) 
+                time.sleep(.05)
                 ## TUNE THIS VALUE! TRY TO MAXMIMIZE PERFORMANCE OF WAITING VS SENDING. 
                 ## WAITING LONGER WILL RESULT IN LESS CONNECTIONS OPENED
             except Exception:
@@ -174,11 +178,11 @@ class DNSRelay:
                 self.sock.sendto(packet_from_server, client_address)
 #                    print(f'{packet.qname} Relayed {client_address[0]}: {client_address[1]}')
                 self.dns_connection_tracker.pop(tcp_dns_id)
-                
+
                 if (recv_count == msg_count):
                     secure_socket.close()
                     break
-                
+
         except timeout:
             ##LOG timeout | most means some requests did not get delivered
             secure_socket.close()
@@ -193,7 +197,7 @@ class DNSRelay:
             self.dns_id_lock = True
             dns_id = random.randint(1, 32000)
             if (dns_id not in self.dns_connection_tracker):
-                
+
                 self.dns_connection_tracker.update({dns_id: ''})
                 self.thread_lock.release()
                 return dns_id
@@ -203,7 +207,7 @@ class DNSRelay:
         f_time = time.ctime(epoch - START_TIME)
         f_time = f_time.split()
         format_time = f_time[3]
-    
+
         return format_time
 
     def FormatTime(self):
@@ -296,29 +300,29 @@ class PacketManipulation:
                 self.qname += chr(byte)
                 length -= 1
                 continue
-                
+
             length = byte
             self.qname += '.'
-    
+
     def Rewrite(self, dns_id=None):
         qname = self.data[12:].split(b'\x00',1)[0]
         dns_id = struct.pack('!H', dns_id)
 
-        offset = len(qname) + 1         
+        offset = len(qname) + 1
         eoqname = 12+offset
         eoquery = eoqname + 4
         rrecord = self.data[eoquery:]
-        
+
         pointer = b'\xc0\x0c'
         ttl_bytes_override = b'\x00\x00\x01+'
-        
-        if (rrecord[0:2] == pointer):                
+
+        if (rrecord[0:2] == pointer):
             splitdata = self.data.split(pointer)
             rrname = pointer
         else:
             splitdata = self.data.split(qname)
             rrname = qname
-            
+
         rr = b''
         for i, rrpart in enumerate(splitdata, 1):
             if i != 1:
