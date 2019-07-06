@@ -289,9 +289,9 @@ class PacketManipulation:
         self.qtype = dnsQ[0]
 
         # coverting query name from bytes to string
-        length = qname[0] + 1
+        length = qname[0]
         self.qname = ''
-        for byte in qname:
+        for byte in qname[1:]:
             if (length != 0):
                 self.qname += chr(byte)
                 length -= 1
