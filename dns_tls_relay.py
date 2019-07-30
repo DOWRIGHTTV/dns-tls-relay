@@ -56,7 +56,7 @@ class DNSRelay:
                 if (packet.qtype == 1):
                     self.TLSQueue(data_from_client, client_address)
             except Exception as E:
-                print(E)
+                print(f'MAIN: {E}')
 
         self.Main()
 
@@ -97,12 +97,12 @@ class DNSRelay:
 
                             self.dns_tls_queue.pop(0)
                         except Exception as E:
-                            print(E)
+                            print(f'TLSQUEUE | SEND: {E}')
 
                 # This value is optional, but is in place to test efficiency of tls connections vs udp requests recieved.
                 time.sleep(.025)
             except Exception as E:
-                print(E)
+                print(f'TLSQUEUE | GENERAL: {E}')
 
     # Response Handler will match all recieved request responses from the server, match it to the host connection
     # and relay it back to the correct host/port. this will happen as they are recieved. the socket will be closed
@@ -136,7 +136,7 @@ class DNSRelay:
                 self.dns_connection_tracker.pop(tcp_dns_id)
 
         except Exception as E:
-            print(E)
+            print(f'RESPONSE HANDLER: {E}')
 
         secure_socket.close()
 
