@@ -80,6 +80,7 @@ class DNSRelay:
                 secure_socket = None
                 msg_queue = list(self.dns_tls_queue)
                 if (msg_queue):
+                    print(msg_queue)
                     for secure_server, server_info in self.dns_servers.items():
                         now = time.time()
                         retry = now - server_info.get('Retry', now)
@@ -91,16 +92,20 @@ class DNSRelay:
                 if (secure_socket):
                     msg_count = len(msg_queue)
                     threading.Thread(target=self.TLSResponseHandler, args=(secure_socket, msg_count)).start()
+                    time.sleep(.001)
                     for message in msg_queue:
                         try:
                             secure_socket.send(message)
+                            print('SENT DATA TO SERVER')
 
-                            self.dns_tls_queue.pop(0)
                         except Exception as E:
+                            print(secure_socket)
                             print(f'TLSQUEUE | SEND: {E}')
 
+                        self.dns_tls_queue.pop(0)
+
                 # This value is optional, but is in place to test efficiency of tls connections vs udp requests recieved.
-                time.sleep(.025)
+#                time.sleep(.025)
             except Exception as E:
                 print(f'TLSQUEUE | GENERAL: {E}')
 
@@ -113,6 +118,7 @@ class DNSRelay:
             while recv_count < msg_count:
                 data_from_server = secure_socket.recv(4096)
                 recv_count += 1
+                print(recv_count)
                 if (not data_from_server):
                     break
                 # Checking the DNS ID in packet, Adjusted to ensure uniqueness
@@ -130,7 +136,7 @@ class DNSRelay:
                 ## Relaying packet from server back to host then removing connection from tracker if the
                 # server response is not empty
                 if (packet_from_server):
-                    print(f'Relayed data to client: {client_address[0]}:{client_address[1]}.')
+#                    print(f'Relayed data to client: {client_address[0]}:{client_address[1]}.')
                     self.sock.sendto(packet_from_server, client_address)
 
                 self.dns_connection_tracker.pop(tcp_dns_id)
@@ -159,7 +165,7 @@ class DNSRelay:
         try:
             sock = socket(AF_INET, SOCK_STREAM)
             sock.bind((SERVER_ADDRESS, 0))
-            sock.settimeout(3)
+#            sock.settimeout(3)
 
             context = ssl.create_default_context()
             context = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
