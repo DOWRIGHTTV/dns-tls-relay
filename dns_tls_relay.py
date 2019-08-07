@@ -10,7 +10,7 @@ import random
 import ssl
 
 from copy import deepcopy
-from socket import socket, timeout, AF_INET, SOCK_DGRAM, SOCK_STREAM
+from socket import socket, timeout, AF_INET, SOCK_DGRAM, SOCK_STREAM, SHUT_WR
 
 SERVER_ADDRESS = '192.168.5.135'
 DNS_TLS_PORT = 853
@@ -45,7 +45,7 @@ class DNSRelay:
         while True:
             try:
                 data_from_client, client_address = self.sock.recvfrom(1024)
-                print(f'Receved data from client: {client_address[0]}:{client_address[1]}.')
+#                print(f'Receved data from client: {client_address[0]}:{client_address[1]}.')
                 if (not data_from_client):
                     break
                 packet = PacketManipulation(data_from_client, protocol=UDP)
@@ -80,7 +80,6 @@ class DNSRelay:
                 secure_socket = None
                 msg_queue = list(self.dns_tls_queue)
                 if (msg_queue):
-                    print(msg_queue)
                     for secure_server, server_info in self.dns_servers.items():
                         now = time.time()
                         retry = now - server_info.get('Retry', now)
@@ -95,15 +94,13 @@ class DNSRelay:
                     for message in msg_queue:
                         try:
                             secure_socket.send(message)
-                            print('SENT DATA TO SERVER')
 
                         except Exception as E:
-                            print(secure_socket)
                             print(f'TLSQUEUE | SEND: {E}')
 
                         self.dns_tls_queue.pop(0)
 
-                    secure_socket.shutdown(1)
+                    secure_socket.shutdown(SHUT_WR)
                 # This value is optional, but is in place to test efficiency of tls connections vs udp requests recieved.
                 time.sleep(.05)
             except Exception as E:
