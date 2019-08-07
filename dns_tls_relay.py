@@ -90,8 +90,7 @@ class DNSRelay:
                             break
 
                 if (secure_socket):
-                    msg_count = len(msg_queue)
-                    threading.Thread(target=self.TLSResponseHandler, args=(secure_socket, msg_count)).start()
+                    threading.Thread(target=self.TLSResponseHandler, args=(secure_socket)).start()
                     time.sleep(.001)
                     for message in msg_queue:
                         try:
@@ -104,6 +103,7 @@ class DNSRelay:
 
                         self.dns_tls_queue.pop(0)
 
+                    secure_socket.shutdown(1)
                 # This value is optional, but is in place to test efficiency of tls connections vs udp requests recieved.
                 time.sleep(.05)
             except Exception as E:
@@ -112,12 +112,10 @@ class DNSRelay:
     # Response Handler will match all recieved request responses from the server, match it to the host connection
     # and relay it back to the correct host/port. this will happen as they are recieved. the socket will be closed
     # once the recieved count matches the expected/sent count or from socket timeout
-    def TLSResponseHandler(self, secure_socket, msg_count):
-        recv_count = 0
+    def TLSResponseHandler(self, secure_socket):
         try:
-            while recv_count < msg_count:
+            while True:
                 data_from_server = secure_socket.recv(4096)
-                recv_count += 1
                 if (not data_from_server):
                     break
                 # Checking the DNS ID in packet, Adjusted to ensure uniqueness
@@ -143,7 +141,6 @@ class DNSRelay:
         except Exception as E:
             print(f'RESPONSE HANDLER: {E}')
 
-        secure_socket.shutdown()
         secure_socket.close()
 
     def GenerateIDandStore(self):
@@ -164,7 +161,6 @@ class DNSRelay:
         try:
             sock = socket(AF_INET, SOCK_STREAM)
             sock.bind((SERVER_ADDRESS, 0))
-            sock.settimeout(2)
 
             context = ssl.create_default_context()
             context = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
