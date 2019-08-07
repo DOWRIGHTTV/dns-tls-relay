@@ -90,7 +90,7 @@ class DNSRelay:
                             break
 
                 if (secure_socket):
-                    threading.Thread(target=self.TLSResponseHandler, args=(secure_socket)).start()
+                    threading.Thread(target=self.TLSResponseHandler, args=(secure_socket,)).start()
                     time.sleep(.001)
                     for message in msg_queue:
                         try:
