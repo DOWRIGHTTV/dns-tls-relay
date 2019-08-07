@@ -105,7 +105,7 @@ class DNSRelay:
                         self.dns_tls_queue.pop(0)
 
                 # This value is optional, but is in place to test efficiency of tls connections vs udp requests recieved.
-#                time.sleep(.025)
+                time.sleep(.05)
             except Exception as E:
                 print(f'TLSQUEUE | GENERAL: {E}')
 
@@ -118,7 +118,6 @@ class DNSRelay:
             while recv_count < msg_count:
                 data_from_server = secure_socket.recv(4096)
                 recv_count += 1
-                print(recv_count)
                 if (not data_from_server):
                     break
                 # Checking the DNS ID in packet, Adjusted to ensure uniqueness
@@ -147,15 +146,14 @@ class DNSRelay:
         secure_socket.close()
 
     def GenerateIDandStore(self):
-        self.thread_lock.acquire()
-        while True:
-            dns_id = random.randint(1, 32000)
-            if (dns_id not in self.dns_connection_tracker):
+        with self.thread_lock:
+            while True:
+                dns_id = random.randint(1, 32000)
+                if (dns_id not in self.dns_connection_tracker):
 
-                self.dns_connection_tracker.update({dns_id: ''})
-                self.thread_lock.release()
+                    self.dns_connection_tracker.update({dns_id: ''})
 
-                return dns_id
+                    return dns_id
 
     # Connect will retry 3 times if issues, then mark TLS server as inactive and timestamp
     # timestamp will be used to re attempt to connect after retry limit exceeded in message
@@ -165,7 +163,7 @@ class DNSRelay:
         try:
             sock = socket(AF_INET, SOCK_STREAM)
             sock.bind((SERVER_ADDRESS, 0))
-#            sock.settimeout(3)
+            sock.settimeout(2)
 
             context = ssl.create_default_context()
             context = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
@@ -184,7 +182,6 @@ class DNSRelay:
 
         if (secure_socket):
             self.dns_servers[secure_server].update({'TLS': True})
-
         else:
             self.dns_servers[secure_server].update({'TLS': False, 'Retry': now})
 
