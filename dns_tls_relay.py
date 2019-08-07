@@ -143,6 +143,7 @@ class DNSRelay:
         except Exception as E:
             print(f'RESPONSE HANDLER: {E}')
 
+        secure_socket.shutdown()
         secure_socket.close()
 
     def GenerateIDandStore(self):
