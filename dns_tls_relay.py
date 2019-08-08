@@ -110,33 +110,40 @@ class DNSRelay:
     # and relay it back to the correct host/port. this will happen as they are recieved. the socket will be closed
     # once the recieved count matches the expected/sent count or from socket timeout
     def TLSResponseHandler(self, secure_socket):
-        try:
-            while True:
+        while True:
+            try:
                 data_from_server = secure_socket.recv(4096)
                 if (not data_from_server):
                     break
+
+            except (timeout, BlockingIOError):
+                break
+            except Exception:
+                traceback.print_exc()
+                break
+
+            try:
                 # Checking the DNS ID in packet, Adjusted to ensure uniqueness
                 packet = PacketManipulation(data_from_server, protocol=TCP)
                 tcp_dns_id = packet.DNS()
+#                print(f'Secure Request Received from Server. DNS ID: {tcp_dns_id}')
 
                 # Checking client DNS ID and Address info to relay query back to host
-                client_dns_id = self.dns_connection_tracker[tcp_dns_id]['Client ID']
-                client_address = self.dns_connection_tracker[tcp_dns_id]['Client Address']
+                client_dns_id = self.dns_connection_tracker[tcp_dns_id]['client_id']
+                client_address = self.dns_connection_tracker[tcp_dns_id]['client_address']
 
                 ## Parsing packet and rewriting TTL to 5 minutes and changing DNS ID back to original.
                 packet.Rewrite(dns_id=client_dns_id)
                 packet_from_server = packet.send_data
 
-                ## Relaying packet from server back to host then removing connection from tracker if the
-                # server response is not empty
+                ## Relaying packet from server back to host if dns response portion is not empty
                 if (packet_from_server):
-#                    print(f'Relayed data to client: {client_address[0]}:{client_address[1]}.')
                     self.sock.sendto(packet_from_server, client_address)
+#                    print(f'Request Relayed to {client_address[0]}: {client_address[1]}')
+            except Exception:
+                traceback.print_exc()
 
-                self.dns_connection_tracker.pop(tcp_dns_id)
-
-        except Exception as E:
-            print(f'RESPONSE HANDLER: {E}')
+            self.dns_connection_tracker.pop(tcp_dns_id, None)
 
         secure_socket.close()
 
