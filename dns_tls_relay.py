@@ -9,7 +9,7 @@ import json
 import random
 import ssl
 
-from copy import deepcopy
+from collections import deque
 from socket import socket, timeout, AF_INET, SOCK_DGRAM, SOCK_STREAM, SHUT_WR
 
 SERVER_ADDRESS = '192.168.5.135'
@@ -26,7 +26,7 @@ class DNSRelay:
         self.thread_lock = threading.Lock()
 
         self.dns_connection_tracker = {}
-        self.dns_tls_queue = []
+        self.dns_tls_queue = deque()
 
         self.dns_servers = {}
         self.dns_servers['1.1.1.1'] = {'Reach': True, 'TLS': True}
@@ -78,7 +78,7 @@ class DNSRelay:
         while True:
             try:
                 secure_socket = None
-                msg_queue = list(self.dns_tls_queue)
+                msg_queue = self.dns_tls_queue.copy()
                 if (msg_queue):
                     for secure_server, server_info in self.dns_servers.items():
                         now = time.time()
@@ -98,7 +98,7 @@ class DNSRelay:
                         except Exception as E:
                             print(f'TLSQUEUE | SEND: {E}')
 
-                        self.dns_tls_queue.pop(0)
+                        self.dns_tls_queue.popleft()
 
                     secure_socket.shutdown(SHUT_WR)
                 # This value is optional, but is in place to test efficiency of tls connections vs udp requests recieved.
