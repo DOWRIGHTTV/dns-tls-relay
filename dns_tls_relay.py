@@ -198,9 +198,13 @@ class PacketManipulation:
         elif (protocol == TCP):
             self.data = data[2:]
 
+        self.qtype = 0
+        self.qclass = 0
+
     def Parse(self):
         self.QueryInfo()
-        self.QName()
+        if (self.qtype):
+            self.QName()
 
     def DNS(self):
         dns_id = struct.unpack('!H', self.data[:2])[0]
@@ -209,18 +213,19 @@ class PacketManipulation:
 
     def QueryInfo(self):
         self.dns_payload = self.data[12:]
-        self.query_response = self.dns_payload.split(b'\x00',1)
+        dns_query = self.dns_payload.split(b'\x00',1)
 
-        dnsQ = struct.unpack('!2H', self.query_response[1][0:4])
-        self.qtype = dnsQ[0]
-        self.qclass = dnsQ[1]
+        if (len(dns_query) >= 2 and len(dns_query[1]) >= 4):
+            dnsQ = struct.unpack('!2H', dns_query[1][0:4])
+            self.qtype = dnsQ[0]
+            self.qclass = dnsQ[1]
+            self.dns_query = dns_query[0]
 
     def QName(self):
-        qn = self.query_response[0]
-        b = len(qn)
+        b = len(self.dns_query)
         eoqname = b + 1
 
-        qname = struct.unpack(f'!{b}B', qn[:eoqname])
+        qname = struct.unpack(f'!{b}B', self.dns_query[:eoqname])
 
         # coverting query name from bytes to string
         length = qname[0]
