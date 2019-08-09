@@ -158,7 +158,6 @@ class DNSRelay:
 
                     self.dns_connection_tracker.update({dns_id: ''})
 
-                    print(dns_id)
                     return dns_id
 
     # Connect will retry 3 times if issues, then mark TLS server as inactive and timestamp
