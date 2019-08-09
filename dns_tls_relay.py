@@ -228,12 +228,14 @@ class PacketManipulation:
         self.qname = ''
         for byte in qname[1:]:
             if (length != 0):
-                self.qname += chr(byte.lower())
+                self.qname += chr(byte)
                 length -= 1
                 continue
 
             length = byte
             self.qname += '.'
+
+        print(self.qname)
 
     def Rewrite(self, dns_id=None):
         qname = self.data[12:].split(b'\x00',1)[0]
