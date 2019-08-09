@@ -29,8 +29,8 @@ class DNSRelay:
         self.dns_tls_queue = deque()
 
         self.dns_servers = {}
-        self.dns_servers['1.1.1.1'] = {'Reach': True, 'TLS': True}
-        self.dns_servers['1.0.0.1'] = {'Reach': True, 'TLS': True}
+        self.dns_servers['1.1.1.1'] = {'reach': True, 'tls': True}
+        self.dns_servers['1.0.0.1'] = {'reach': True, 'tls': True}
 
     def Start(self):
 
@@ -68,7 +68,7 @@ class DNSRelay:
         dns_payload = packet.UDPtoTLS(tcp_dns_id)
 
         ## Adding client connection info to tracker to be used by response handler
-        self.dns_connection_tracker.update({tcp_dns_id: {'Client ID': client_dns_id, 'Client Address': client_address}})
+        self.dns_connection_tracker.update({tcp_dns_id: {'client_id': client_dns_id, 'client_address': client_address}})
 
         self.dns_tls_queue.append(dns_payload)
 
@@ -82,8 +82,8 @@ class DNSRelay:
                 if (msg_queue):
                     for secure_server, server_info in self.dns_servers.items():
                         now = time.time()
-                        retry = now - server_info.get('Retry', now)
-                        if (server_info['TLS'] or retry >= self.tls_retry):
+                        retry = now - server_info.get('retry', now)
+                        if (server_info['tls'] or retry >= self.tls_retry):
                             secure_socket = self.Connect(secure_server)
                         if (secure_socket):
                             break
@@ -189,9 +189,9 @@ class DNSRelay:
             secure_socket = None
 
         if (secure_socket):
-            self.dns_servers[secure_server].update({'TLS': True})
+            self.dns_servers[secure_server].update({'tls': True})
         else:
-            self.dns_servers[secure_server].update({'TLS': False, 'Retry': now})
+            self.dns_servers[secure_server].update({'tls': False, 'retry': now})
 
         return secure_socket
 
