@@ -225,17 +225,17 @@ class PacketManipulation:
 
         # coverting query name from bytes to string
         length = qname[0]
-        self.qname = ''
+        qname_raw = ''
         for byte in qname[1:]:
             if (length != 0):
-                self.qname += chr(byte)
+                qname_raw += chr(byte)
                 length -= 1
                 continue
 
             length = byte
-            self.qname += '.'
+            qname_raw += '.'
 
-        print(self.qname)
+        self.qname = qname_raw.lower()
 
     def Rewrite(self, dns_id=None):
         qname = self.data[12:].split(b'\x00',1)[0]
