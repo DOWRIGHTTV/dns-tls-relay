@@ -210,9 +210,9 @@ class PacketManipulation:
 
     def QueryInfo(self):
         self.dns_payload = self.data[12:]
-        self.query_response = self.data[12:].split(b'\x00',1)
+        self.query_response = self.dns_payload.split(b'\x00',1)
 
-        dnsQ = struct.unpack('!2H', self.query_response[0:4])
+        dnsQ = struct.unpack('!2H', self.query_response[1][0:4])
         self.qtype = dnsQ[0]
         self.qclass = dnsQ[1]
 
