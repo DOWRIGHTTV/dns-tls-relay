@@ -12,7 +12,7 @@ import ssl
 from collections import deque
 from socket import socket, timeout, AF_INET, SOCK_DGRAM, SOCK_STREAM, SHUT_WR
 
-SERVER_ADDRESS = '192.168.5.135'
+SERVER_ADDRESS = '192.168.2.250'
 DNS_TLS_PORT = 853
 DNS_PORT = 53
 TCP = 6
