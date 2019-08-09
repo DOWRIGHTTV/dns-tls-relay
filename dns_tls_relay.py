@@ -110,6 +110,7 @@ class DNSRelay:
     # and relay it back to the correct host/port. this will happen as they are recieved. the socket will be closed
     # once the recieved count matches the expected/sent count or from socket timeout
     def TLSResponseHandler(self, secure_socket):
+        parse_error = 0
         while True:
             try:
                 data_from_server = secure_socket.recv(4096)
@@ -141,7 +142,12 @@ class DNSRelay:
                     self.sock.sendto(packet_from_server, client_address)
 #                    print(f'Request Relayed to {client_address[0]}: {client_address[1]}')
             except Exception:
+                parse_error += 1
                 traceback.print_exc()
+
+            if (parse_error >= 3):
+                break
+
 
             self.dns_connection_tracker.pop(tcp_dns_id, None)
 
