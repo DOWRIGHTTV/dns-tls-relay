@@ -110,9 +110,9 @@ class DNSRelay:
     # and relay it back to the correct host/port. this will happen as they are recieved. the socket will be closed
     # once the recieved count matches the expected/sent count or from socket timeout
     def TLSResponseHandler(self, secure_socket):
-        parse_error = 0
         while True:
             try:
+                dns_query_response = None
                 data_from_server = secure_socket.recv(4096)
                 if (not data_from_server):
                     break
@@ -130,25 +130,21 @@ class DNSRelay:
 #                print(f'Secure Request Received from Server. DNS ID: {tcp_dns_id}')
 
                 # Checking client DNS ID and Address info to relay query back to host
-                client_dns_id = self.dns_connection_tracker[tcp_dns_id]['client_id']
-                client_address = self.dns_connection_tracker[tcp_dns_id]['client_address']
+                dns_query_info = self.dns_connection_tracker.get(tcp_dns_id, None)
+                if (dns_query_info):
+                    client_dns_id = dns_query_info.get('client_id')
+                    client_address = dns_query_info.get('client_address')
 
-                ## Parsing packet and rewriting TTL to 5 minutes and changing DNS ID back to original.
-                packet.Rewrite(dns_id=client_dns_id)
-                packet_from_server = packet.send_data
+                    ## Parsing packet and rewriting TTL to 5 minutes and changing DNS ID back to original.
+                    packet.Rewrite(dns_id=client_dns_id)
+                    dns_query_response = packet.send_data
 
                 ## Relaying packet from server back to host if dns response portion is not empty
-                if (packet_from_server):
-                    self.sock.sendto(packet_from_server, client_address)
+                if (dns_query_response):
+                    self.sock.sendto(dns_query_response, client_address)
 #                    print(f'Request Relayed to {client_address[0]}: {client_address[1]}')
             except Exception:
-                parse_error += 1
-                print(data_from_server)
                 traceback.print_exc()
-
-            if (parse_error >= 3):
-                break
-
 
             self.dns_connection_tracker.pop(tcp_dns_id, None)
 
@@ -204,8 +200,7 @@ class PacketManipulation:
             self.data = data[2:]
 
     def Parse(self):
-        self.DNS()
-        self.QType()
+        self.QueryInfo()
         self.QName()
 
     def DNS(self):
@@ -213,28 +208,27 @@ class PacketManipulation:
 
         return dns_id
 
-    def QType(self):
+    def QueryInfo(self):
         self.dns_payload = self.data[12:]
-        j = self.dns_payload.index(0) + 1 + 4
-        self.qtype = self.dns_payload[j-3:j-2]
+        self.query_response = self.data[12:].split(b'\x00',1)
+
+        dnsQ = struct.unpack('!2H', self.query_response[0:4])
+        self.qtype = dnsQ[0]
+        self.qclass = dnsQ[1]
 
     def QName(self):
-        qn = self.data[12:].split(b'\x00',1)
-        qt = qn[1]
-        qn = qn[0]
+        qn = self.query_response[0]
         b = len(qn)
         eoqname = b + 1
 
-        qname = struct.unpack(f'!{b}B', qn[0:eoqname])
-        dnsQ = struct.unpack('!2H', qt[0:4])
-        self.qtype = dnsQ[0]
+        qname = struct.unpack(f'!{b}B', qn[:eoqname])
 
         # coverting query name from bytes to string
         length = qname[0]
         self.qname = ''
         for byte in qname[1:]:
             if (length != 0):
-                self.qname += chr(byte)
+                self.qname += chr(byte.lower())
                 length -= 1
                 continue
 
@@ -253,12 +247,9 @@ class PacketManipulation:
         request_header = self.data[:end_of_query]
         request_record = self.data[start_of_record:]
 
-        # assigning pointer variable, which is a protocol constant and ttl for 5 minutes in packet form.
+        # assigning pointer variable (protocol constant) and ttl for 60 minutes in packet form.
         pointer = b'\xc0\x0c'
-#        ttl_bytes_override = b'\x00\x00\x01+'
-
-        # FOR TESTIN ONLY
-        ttl_bytes_override = b'\x00\x00\x00\x05'
+        ttl_bytes_override = b'\x00\x00\x0e\x10'
 
         # splitting the dns packet on the compressed pointer if present, if not splitting on qname.
         if (request_record[0:2] == pointer):
@@ -282,7 +273,7 @@ class PacketManipulation:
                 if (type_check == A_RECORD):
                     ttl_bytes = rr_part[offset + 4:offset + 8]
                     ttl_check = struct.unpack('>L', ttl_bytes)[0]
-                    if (ttl_check > 299):
+                    if (ttl_check > 3600):
                         request_record += rr_name + rr_part[:4] + ttl_bytes_override + rr_part[8:]
                     else:
                         request_record += rr_name + rr_part
