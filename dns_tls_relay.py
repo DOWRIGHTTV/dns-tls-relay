@@ -143,6 +143,7 @@ class DNSRelay:
 #                    print(f'Request Relayed to {client_address[0]}: {client_address[1]}')
             except Exception:
                 parse_error += 1
+                print(data_from_server)
                 traceback.print_exc()
 
             if (parse_error >= 3):
