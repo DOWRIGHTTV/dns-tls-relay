@@ -210,6 +210,8 @@ class PacketManipulation:
         self.qtype = 0
         self.qclass = 0
 
+        self.send_data = b''
+
     def Parse(self):
         self.QueryInfo()
         if (self.qtype):
@@ -252,8 +254,6 @@ class PacketManipulation:
 
     def Rewrite(self, dns_id=None):
         qname = self.data[12:].split(b'\x00',1)[0]
-        if (dns_id):
-            dns_id = struct.pack('!H', dns_id)
 
         offset = len(qname) + 1
         end_of_qname = 12 + offset
@@ -262,38 +262,39 @@ class PacketManipulation:
         request_header = self.data[:end_of_query]
         request_record = self.data[start_of_record:]
 
-        # assigning pointer variable (protocol constant) and ttl for 60 minutes in packet form.
+        # assigning pointer variable, which is a protocol constant and ttl for 5 minutes in packet form.
         pointer = b'\xc0\x0c'
-        ttl_bytes_override = b'\x00\x00\x0e\x10'
+#        ttl_bytes_override = b'\x00\x00\x01+'
+
+        # FOR TESTIN ONLY
+        ttl_bytes_override = b'\x00\x00\x00\x05'
 
         # splitting the dns packet on the compressed pointer if present, if not splitting on qname.
         if (request_record[0:2] == pointer):
             rr_splitdata = request_record.split(pointer)
             rr_name = pointer
-            offset = 0
         else:
             rr_splitdata = request_record.split(qname)
             rr_name = qname
 
-        # checking to see whether a record is present in response. if so, reset record and prep to rewrite.
-        # rewrite the dns record TTL to 5 minutes if not already lower to ensure clients to not keep records
-        # cached for exessive periods making dns proxy ineffective.
+        # reset request record var then iterating over record recieved from server and rewriting the dns record TTL
+        # to 5 minutes if present or not already lower to ensure clients to not keep records cached for exessive
+        # periods making dns proxy ineffective.
         request_record = b''
         for rr_part in rr_splitdata[1:]:
-            bytes_check = rr_part[offset + 2:offset + 8]
+            bytes_check = rr_part[2:8]
             type_check, ttl_check = struct.unpack('!HL', bytes_check)
-            if (type_check == A_RECORD and ttl_check > 3600):
+            if (type_check == A_RECORD and ttl_check > 299):
                 request_record += rr_name + rr_part[:4] + ttl_bytes_override + rr_part[8:]
             else:
                 request_record += rr_name + rr_part
 
-        # Replacing tcp dns id with original client dns id if id is present
-        if (request_record and dns_id):
-            self.send_data = dns_id + request_header[2:] + request_record
-        elif (request_record and not dns_id):
-            self.send_data = request_header + request_record
-        else:
-            self.send_data = request_header
+        # Replacing tcp dns id with original client dns id if converting back from tcp/tls.
+        if (dns_id):
+            request_header = request_header[2:]
+            self.send_data += struct.pack('!H', dns_id)
+
+        self.send_data += request_header + request_record
 
     def UDPtoTLS(self, dns_id):
         payload_length = struct.pack('!H', len(self.data))
