@@ -23,7 +23,7 @@ class DNSRelay:
     def __init__(self):
         self.tls_retry = 60
 
-        self.thread_lock = threading.Lock()
+        self.unique_id_lock = threading.Lock()
 
         self.dns_connection_tracker = {}
         self.dns_tls_queue = deque()
@@ -143,6 +143,10 @@ class DNSRelay:
                 if (dns_query_response):
                     self.sock.sendto(dns_query_response, client_address)
 #                    print(f'Request Relayed to {client_address[0]}: {client_address[1]}')
+            except ValueError:
+                # to troubleshoot empty separator error
+                print('empty separator error')
+                print(data_from_server)
             except Exception:
                 traceback.print_exc()
 
@@ -151,7 +155,7 @@ class DNSRelay:
         secure_socket.close()
 
     def GenerateIDandStore(self):
-        with self.thread_lock:
+        with self.unique_id_lock:
             while True:
                 dns_id = random.randint(1, 32000)
                 if (dns_id not in self.dns_connection_tracker):
@@ -269,20 +273,15 @@ class PacketManipulation:
         # checking to see whether a record is present in response. if so, reset record and prep to rewrite.
         # rewrite the dns record TTL to 5 minutes if not already lower to ensure clients to not keep records
         # cached for exessive periods making dns proxy ineffective.
+        request_record = b''
         send_data = False
         if (request_record):
             send_data = True
-            request_record = b''
             for rr_part in rr_splitdata[1:]:
-                type_check = rr_part[offset + 2:offset + 4]
-                type_check = struct.unpack('!H', type_check)[0]
-                if (type_check == A_RECORD):
-                    ttl_bytes = rr_part[offset + 4:offset + 8]
-                    ttl_check = struct.unpack('>L', ttl_bytes)[0]
-                    if (ttl_check > 3600):
-                        request_record += rr_name + rr_part[:4] + ttl_bytes_override + rr_part[8:]
-                    else:
-                        request_record += rr_name + rr_part
+                bytes_check = rr_part[offset + 2:offset + 8]
+                type_check, ttl_check = struct.unpack('!HL', bytes_check)
+                if (type_check == A_RECORD and ttl_check > 3600):
+                    request_record += rr_name + rr_part[:4] + ttl_bytes_override + rr_part[8:]
                 else:
                     request_record += rr_name + rr_part
 
