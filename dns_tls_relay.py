@@ -139,8 +139,7 @@ class DNSRelay:
                     packet.Rewrite(dns_id=client_dns_id)
                     dns_query_response = packet.send_data
 
-                ## Relaying packet from server back to host if dns response portion is not empty
-                if (dns_query_response):
+                    ## Relaying packet from server back to host
                     self.sock.sendto(dns_query_response, client_address)
 #                    print(f'Request Relayed to {client_address[0]}: {client_address[1]}')
             except ValueError:
@@ -274,24 +273,21 @@ class PacketManipulation:
         # rewrite the dns record TTL to 5 minutes if not already lower to ensure clients to not keep records
         # cached for exessive periods making dns proxy ineffective.
         request_record = b''
-        send_data = False
-        if (request_record):
-            send_data = True
-            for rr_part in rr_splitdata[1:]:
-                bytes_check = rr_part[offset + 2:offset + 8]
-                type_check, ttl_check = struct.unpack('!HL', bytes_check)
-                if (type_check == A_RECORD and ttl_check > 3600):
-                    request_record += rr_name + rr_part[:4] + ttl_bytes_override + rr_part[8:]
-                else:
-                    request_record += rr_name + rr_part
+        for rr_part in rr_splitdata[1:]:
+            bytes_check = rr_part[offset + 2:offset + 8]
+            type_check, ttl_check = struct.unpack('!HL', bytes_check)
+            if (type_check == A_RECORD and ttl_check > 3600):
+                request_record += rr_name + rr_part[:4] + ttl_bytes_override + rr_part[8:]
+            else:
+                request_record += rr_name + rr_part
 
         # Replacing tcp dns id with original client dns id if id is present
-        if (send_data and dns_id):
+        if (request_record and dns_id):
             self.send_data = dns_id + request_header[2:] + request_record
-        elif (send_data and not dns_id):
+        elif (request_record and not dns_id):
             self.send_data = request_header + request_record
         else:
-            self.send_data = None
+            self.send_data = request_header
 
     def UDPtoTLS(self, dns_id):
         payload_length = struct.pack('!H', len(self.data))
