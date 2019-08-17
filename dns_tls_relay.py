@@ -262,12 +262,9 @@ class PacketManipulation:
         request_header = self.data[:end_of_query]
         request_record = self.data[start_of_record:]
 
-        # assigning pointer variable, which is a protocol constant and ttl for 5 minutes in packet form.
+        # assigning pointer variable, which is a protocol constant and ttl for 1 hour in packet form.
         pointer = b'\xc0\x0c'
-#        ttl_bytes_override = b'\x00\x00\x01+'
-
-        # FOR TESTIN ONLY
-        ttl_bytes_override = b'\x00\x00\x00\x05'
+        ttl_bytes_override = b'\x00\x00\x0e\x10'
 
         # splitting the dns packet on the compressed pointer if present, if not splitting on qname.
         if (request_record[0:2] == pointer):
