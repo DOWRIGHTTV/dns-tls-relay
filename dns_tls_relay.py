@@ -12,11 +12,17 @@ import ssl
 from collections import deque
 from socket import socket, timeout, AF_INET, SOCK_DGRAM, SOCK_STREAM, SHUT_WR
 
-SERVER_ADDRESS = '192.168.2.250'
-DNS_TLS_PORT = 853
-DNS_PORT = 53
 TCP = 6
 UDP = 17
+
+# must support DNS over TLS (not https/443, tcp/853)
+PUBLIC_SERVER_1 = '1.1.1.1'
+PUBLIC_SERVER_2 = '1.0.0.1'
+DNS_TLS_PORT = 853
+
+LISTENING_ADDRESS = '192.168.2.250'
+DNS_PORT = 53
+
 A_RECORD = 1
 
 class DNSRelay:
@@ -29,8 +35,8 @@ class DNSRelay:
         self.dns_tls_queue = deque()
 
         self.dns_servers = {}
-        self.dns_servers['1.1.1.1'] = {'reach': True, 'tls': True}
-        self.dns_servers['1.0.0.1'] = {'reach': True, 'tls': True}
+        self.dns_servers[PUBLIC_SERVER_1] = {'reach': True, 'tls': True}
+        self.dns_servers[PUBLIC_SERVER_2] = {'reach': True, 'tls': True}
 
     def Start(self):
 
@@ -39,9 +45,9 @@ class DNSRelay:
 
     def Main(self):
         self.sock = socket(AF_INET, SOCK_DGRAM)
-        self.sock.bind((SERVER_ADDRESS, DNS_PORT))
+        self.sock.bind((LISTENING_ADDRESS, DNS_PORT))
 
-        print(f'[+] Listening -> {SERVER_ADDRESS}:{DNS_PORT}')
+        print(f'[+] Listening -> {LISTENING_ADDRESS}:{DNS_PORT}')
         while True:
             try:
                 data_from_client, client_address = self.sock.recvfrom(1024)
@@ -170,7 +176,7 @@ class DNSRelay:
         now = round(time.time())
         try:
             sock = socket(AF_INET, SOCK_STREAM)
-            sock.bind((SERVER_ADDRESS, 0))
+            sock.bind((LISTENING_ADDRESS, 0))
 
             context = ssl.create_default_context()
             context = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
