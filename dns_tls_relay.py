@@ -183,7 +183,6 @@ class DNSRelay:
             context = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
             context.verify_mode = ssl.CERT_REQUIRED
             context.load_verify_locations('/etc/ssl/certs/ca-certificates.crt')
-            context.options |= (ssl.OP_NO_TLSv1 | ssl.OP_NO_TLSv1_1)
 
             # Wrap socket and Connect. If exception will return None which will have
             # the queue handler try the other server if available and will mark this
