@@ -61,7 +61,7 @@ class DNSRelay:
                 ## to handle the rest of the process and sending client data in for relay to dns server
                 if (packet.qtype == 1):
                     self.TLSQueue(data_from_client, client_address)
-                    time.sleep(0.01)
+                    time.sleep(.01)
             except Exception as E:
                 print(f'MAIN: {E}')
 
@@ -97,6 +97,7 @@ class DNSRelay:
 
                 if (secure_socket):
                     threading.Thread(target=self.TLSResponseHandler, args=(secure_socket,)).start()
+                    # prevents double free and ssllib crashes/ python segmentation faults
                     time.sleep(.001)
                     for message in msg_queue:
                         try:
@@ -108,7 +109,7 @@ class DNSRelay:
                         self.dns_tls_queue.popleft()
 
                     secure_socket.shutdown(SHUT_WR)
-                # This value is optional, but is in place to test efficiency of tls connections vs udp requests recieved.
+                # waiting 10ms before checking queue again, this will make idle performance lower.
                 time.sleep(.01)
             except Exception as E:
                 print(f'TLSQUEUE | GENERAL: {E}')
