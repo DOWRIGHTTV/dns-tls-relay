@@ -109,7 +109,7 @@ class DNSRelay:
 
                     secure_socket.shutdown(SHUT_WR)
                 # This value is optional, but is in place to test efficiency of tls connections vs udp requests recieved.
-                time.sleep(.015)
+                time.sleep(.01)
             except Exception as E:
                 print(f'TLSQUEUE | GENERAL: {E}')
 
