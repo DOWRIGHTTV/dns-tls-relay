@@ -1,4 +1,4 @@
-#!/usr/bin/python3
+#!/usr/bin/env python3
 
 import os, sys, subprocess
 import struct
@@ -61,6 +61,7 @@ class DNSRelay:
                 ## to handle the rest of the process and sending client data in for relay to dns server
                 if (packet.qtype == 1):
                     self.TLSQueue(data_from_client, client_address)
+                    time.sleep(0.01)
             except Exception as E:
                 print(f'MAIN: {E}')
 
@@ -108,7 +109,7 @@ class DNSRelay:
 
                     secure_socket.shutdown(SHUT_WR)
                 # This value is optional, but is in place to test efficiency of tls connections vs udp requests recieved.
-                time.sleep(.05)
+                time.sleep(.015)
             except Exception as E:
                 print(f'TLSQUEUE | GENERAL: {E}')
 
