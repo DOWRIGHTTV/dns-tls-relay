@@ -26,6 +26,11 @@ class PacketManipulation:
         if (self.qtype == A_RECORD):
             self.QName()
 
+    def DNSID(self):
+        dns_id = struct.unpack('!H', self.data[:2])[0]
+
+        return dns_id
+
     def QueryInfo(self):
         self.dns_payload = self.data[12:]
         self.dns_id = struct.unpack('!H', self.data[:2])[0]

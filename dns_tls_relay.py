@@ -85,7 +85,7 @@ class TLS:
 
     def AddtoQueue(self, data_from_client, client_address):
         packet = PacketManipulation(data_from_client, protocol=UDP)
-        client_dns_id = packet.DNS()
+        client_dns_id = packet.DNSID()
 
         tcp_dns_id = self.GenerateIDandStore()
         dns_payload = packet.UDPtoTLS(tcp_dns_id)
