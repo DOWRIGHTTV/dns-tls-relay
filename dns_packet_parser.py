@@ -62,7 +62,7 @@ class PacketManipulation:
 
         self.qname = qname_raw.lower()
 
-    def Rewrite(self, dns_id=None):
+    def Rewrite(self, dns_id=None, TTL=3600):
         qname = self.data[12:].split(b'\x00',1)[0]
 
         offset = len(qname) + 1
@@ -86,14 +86,16 @@ class PacketManipulation:
 
         # reset request record var then iterating over record recieved from server and rewriting the dns record TTL
         # to 1 hour | other records like SOA are unaffected
+        self.query_ttl = TTL
         request_record = b''
         for rr_part in rr_splitdata[1:]:
             bytes_check = rr_part[2:8]
             type_check, ttl_check = struct.unpack('!HL', bytes_check)
-            if (type_check == A_RECORD and ttl_check > 299):
+            if (type_check == A_RECORD and ttl_check > TTL):
                 request_record += rr_name + rr_part[:4] + ttl_bytes_override + rr_part[8:]
             else:
                 request_record += rr_name + rr_part
+                self.query_ttl = ttl_check
 
         # Replacing tcp dns id with original client dns id if converting back from tcp/tls.
         if (dns_id):
