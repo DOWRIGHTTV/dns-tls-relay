@@ -157,11 +157,11 @@ class TLS:
             packet = PacketManipulation(data_from_server, protocol=TCP)
             packet.QueryInfo()
             if (packet.qtype == A_RECORD):
-                print(f'Secure Request Received from Server. DNS ID: {tcp_dns_id}')
+                print(f'Secure Request Received from Server. DNS ID: {packet.dns_id}')
                 # Checking client DNS ID and Address info to relay query back to host
                 dns_query_info = self.dns_connection_tracker.get(packet.dns_id, None)
 
-            if (packet.dns_id):
+            if (packet.dns_id and packet.qtype == A_RECORD):
                 client_dns_id = dns_query_info.get('client_id')
                 client_address = dns_query_info.get('client_address')
 
