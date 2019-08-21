@@ -52,7 +52,7 @@ class DNSRelay:
         while True:
             try:
                 data_from_client, client_address = self.sock.recvfrom(1024)
-                print(f'Receved data from client: {client_address[0]}:{client_address[1]}.')
+#                print(f'Receved data from client: {client_address[0]}:{client_address[1]}.')
                 if (not data_from_client):
                     break
                 packet = PacketManipulation(data_from_client, protocol=UDP)
@@ -155,12 +155,13 @@ class TLS:
         try:
             # Checking the DNS ID in packet, Adjusted to ensure uniqueness
             packet = PacketManipulation(data_from_server, protocol=TCP)
-            tcp_dns_id = packet.DNS()
+            packet.QueryInfo()
+            if (packet.qtype == A_RECORD):
             print(f'Secure Request Received from Server. DNS ID: {tcp_dns_id}')
-
             # Checking client DNS ID and Address info to relay query back to host
-            dns_query_info = self.dns_connection_tracker.get(tcp_dns_id, None)
-            if (dns_query_info):
+                dns_query_info = self.dns_connection_tracker.get(packet.dns_id, None)
+
+            if (packet.dns_id):
                 client_dns_id = dns_query_info.get('client_id')
                 client_address = dns_query_info.get('client_address')
 
@@ -170,7 +171,7 @@ class TLS:
 
                 self.DNSRelay.SendtoClient(dns_query_response, client_address)
 
-            self.dns_connection_tracker.pop(tcp_dns_id, None)
+            self.dns_connection_tracker.pop(packet.dns_id, None)
         except ValueError:
             # to troubleshoot empty separator error
             print('empty separator error')
@@ -196,7 +197,7 @@ class TLS:
         now = round(time.time())
         try:
             sock = socket(AF_INET, SOCK_STREAM)
-            sock.bind(('10.0.2.15', 0))
+            sock.bind((LISTENING_ADDRESS, 0))
 
             context = ssl.create_default_context()
             context = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
