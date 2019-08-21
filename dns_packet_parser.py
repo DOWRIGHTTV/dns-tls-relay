@@ -22,7 +22,7 @@ class PacketManipulation:
 
     def Parse(self):
         self.QueryInfo()
-        if (self.qtype):
+        if (self.qtype == A_RECORD):
             self.QName()
 
     def DNS(self):

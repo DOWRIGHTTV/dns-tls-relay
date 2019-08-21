@@ -30,20 +30,19 @@ DNS_TLS_PORT = 853
 
 class DNSRelay:
     def __init__(self):
-        self.tls_retry = 60
-
-        self.unique_id_lock = threading.Lock()
-
-        self.dns_connection_tracker = {}
-        self.dns_tls_queue = deque()
-
         self.dns_servers = {}
         self.dns_servers[PUBLIC_SERVER_1] = {'reach': True, 'tls': True}
         self.dns_servers[PUBLIC_SERVER_2] = {'reach': True, 'tls': True}
 
-    def Start(self):
+        self.tls_retry = 60
 
-        threading.Thread(target=self.TLSQueryQueue).start()
+        self.dns_query_cache = {}
+
+
+    def Start(self):
+        self.TLS = TLS(self)
+
+        threading.Thread(target=self.TLS.ProcessQueue).start()
         self.Main()
 
     def Main(self):
@@ -62,15 +61,29 @@ class DNSRelay:
 
                 ## Matching IPV4 DNS queries only. All other will be dropped. Then creating a thread
                 ## to handle the rest of the process and sending client data in for relay to dns server
-                if (packet.qtype == 1):
-                    self.TLSQueue(data_from_client, client_address)
+                if (packet.qtype == A_RECORD):
+                    self.TLS.AddtoQueue(data_from_client, client_address)
                     time.sleep(.01)
             except Exception as E:
                 print(f'MAIN: {E}')
 
         self.Main()
 
-    def TLSQueue(self, data_from_client, client_address):
+    def SendtoClient(self, dns_query_response, client_address):
+        ## Relaying packet from server back to host
+        self.sock.sendto(dns_query_response, client_address)
+#                    print(f'Request Relayed to {client_address[0]}: {client_address[1]}')
+
+class TLS:
+    def __init__(self, DNSProxy):
+        self.DNSProxy = DNSProxy
+
+        self.dns_connection_tracker = {}
+        self.dns_tls_queue = deque()
+
+        self.unique_id_lock = threading.Lock()
+
+    def AddtoQueue(self, data_from_client, client_address):
         packet = PacketManipulation(data_from_client, protocol=UDP)
         client_dns_id = packet.DNS()
 
@@ -84,94 +97,90 @@ class DNSRelay:
 
     ## Queue Handler will make a TLS connection to remote dns server/ start a response handler thread and send all requests
     # in queue over the connection.
-    def TLSQueryQueue(self):
+    def ProcessQueue(self):
         while True:
-            try:
-                secure_socket = None
-                msg_queue = self.dns_tls_queue.copy()
-                if (msg_queue):
-                    for secure_server, server_info in self.dns_servers.items():
-                        now = time.time()
-                        retry = now - server_info.get('retry', now)
-                        if (server_info['tls'] or retry >= self.tls_retry):
-                            secure_socket = self.Connect(secure_server)
-                        if (secure_socket):
-                            break
+            msg_queue = self.dns_tls_queue.copy()
+            if (not msg_queue):
+                # waiting 1ms before checking queue again for idle perf
+                time.sleep(.001)
+                continue
 
+            for secure_server, server_info in self.DNSProxy.dns_servers.items():
+                now = time.time()
+                retry = now - server_info.get('retry', now)
+                if (server_info['tls'] or retry >= self.DNSProxy.tls_retry):
+                    secure_socket = self.Connect(secure_server)
                 if (secure_socket):
-                    threading.Thread(target=self.TLSResponseHandler, args=(secure_socket,)).start()
-                    # prevents double free and ssllib crashes/ python segmentation faults
-                    time.sleep(.001)
-                    for message in msg_queue:
-                        try:
-                            secure_socket.send(message)
+                    self.SendQueries(secure_socket, msg_queue)
 
-                        except Exception as E:
-                            print(f'TLSQUEUE | SEND: {E}')
+    def SendQueries(self, secure_socket, msg_queue):
+        try:
+            for message in msg_queue:
+                secure_socket.send(message)
 
-                        self.dns_tls_queue.popleft()
+            secure_socket.shutdown(SHUT_WR)
 
-                    secure_socket.shutdown(SHUT_WR)
-                # waiting 10ms before checking queue again, this will make idle performance lower.
-                time.sleep(.01)
-            except Exception as E:
-                print(f'TLSQUEUE | GENERAL: {E}')
+        except Exception as E:
+            print(f'TLSQUEUE | SEND: {E}')
 
-    # Response Handler will match all recieved request responses from the server, match it to the host connection
-    # and relay it back to the correct host/port. this will happen as they are recieved. the socket will be closed
-    # once the recieved count matches the expected/sent count or from socket timeout
-    def TLSResponseHandler(self, secure_socket):
+        # ensuring failed sends get removed from queue
+        msg_count = len(msg_queue)
+        for _ in range(msg_count):
+            self.dns_tls_queue.popleft()
+
+    def ReceiveQueries(self, secure_socket):
         while True:
             try:
-                dns_query_response = None
                 data_from_server = secure_socket.recv(4096)
                 if (not data_from_server):
                     break
 
+                self.ParseServerResponse(data_from_server)
             except (timeout, BlockingIOError):
                 break
             except Exception:
                 traceback.print_exc()
                 break
 
-            try:
-                # Checking the DNS ID in packet, Adjusted to ensure uniqueness
-                packet = PacketManipulation(data_from_server, protocol=TCP)
-                tcp_dns_id = packet.DNS()
-#                print(f'Secure Request Received from Server. DNS ID: {tcp_dns_id}')
-
-                # Checking client DNS ID and Address info to relay query back to host
-                dns_query_info = self.dns_connection_tracker.get(tcp_dns_id, None)
-                if (dns_query_info):
-                    client_dns_id = dns_query_info.get('client_id')
-                    client_address = dns_query_info.get('client_address')
-
-                    ## Parsing packet and rewriting TTL to 5 minutes and changing DNS ID back to original.
-                    packet.Rewrite(dns_id=client_dns_id)
-                    dns_query_response = packet.send_data
-
-                    ## Relaying packet from server back to host
-                    self.sock.sendto(dns_query_response, client_address)
-#                    print(f'Request Relayed to {client_address[0]}: {client_address[1]}')
-            except ValueError:
-                # to troubleshoot empty separator error
-                print('empty separator error')
-                print(data_from_server)
-            except Exception:
-                traceback.print_exc()
-
-            self.dns_connection_tracker.pop(tcp_dns_id, None)
-
         secure_socket.close()
 
-    # Aquire ID Lock, then generates a random number until a unique number is found. Once found
+    # Response Handler will match all recieved request responses from the server, match it to the host connection
+    # and relay it back to the correct host/port. this will happen as they are recieved. the socket will be closed
+    # once the recieved count matches the expected/sent count or from socket timeout
+    def ParseServerResponse(self, data_from_server):
+        try:
+            # Checking the DNS ID in packet, Adjusted to ensure uniqueness
+            packet = PacketManipulation(data_from_server, protocol=TCP)
+            tcp_dns_id = packet.DNS()
+#                print(f'Secure Request Received from Server. DNS ID: {tcp_dns_id}')
+
+            # Checking client DNS ID and Address info to relay query back to host
+            dns_query_info = self.dns_connection_tracker.get(tcp_dns_id, None)
+            if (dns_query_info):
+                client_dns_id = dns_query_info.get('client_id')
+                client_address = dns_query_info.get('client_address')
+
+                ## Parsing packet and rewriting TTL to 5 minutes and changing DNS ID back to original.
+                packet.Rewrite(dns_id=client_dns_id)
+                dns_query_response = packet.send_data
+
+                self.DNSProxy.SendtoClient(dns_query_response, client_address)
+
+            self.dns_connection_tracker.pop(tcp_dns_id, None)
+        except ValueError:
+            # to troubleshoot empty separator error
+            print('empty separator error')
+            print(data_from_server)
+        except Exception:
+            traceback.print_exc()
+
+    # Acquire ID Lock, then generates a random number until a unique number is found. Once found
     # it will be stored and used for the external TLS query to ensure all requests are unique
     def GenerateIDandStore(self):
         with self.unique_id_lock:
             while True:
                 dns_id = random.randint(1, 32000)
                 if (dns_id not in self.dns_connection_tracker):
-
                     self.dns_connection_tracker.update({dns_id: ''})
 
                     return dns_id
@@ -200,8 +209,9 @@ class DNSRelay:
             secure_socket = None
 
         if (secure_socket):
-            self.dns_servers[secure_server].update({'tls': True})
+            self.DNSProxy.dns_servers[secure_server].update({'tls': True})
         else:
-            self.dns_servers[secure_server].update({'tls': False, 'retry': now})
+            self.DNSProxy.dns_servers[secure_server].update({'tls': False, 'retry': now})
 
         return secure_socket
+
