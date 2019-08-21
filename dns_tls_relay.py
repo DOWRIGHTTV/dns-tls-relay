@@ -73,7 +73,6 @@ class DNSRelay:
 
     def SendtoClient(self, packet, client_address, from_cache=False):
         ## Relaying packet from server back to host
-        print(packet.send_data)
         self.sock.sendto(packet.send_data, client_address)
 #        print(f'Request Relayed to {client_address[0]}: {client_address[1]}')
 
@@ -92,7 +91,6 @@ class DNSRelay:
         client_dns_id = packet.DNSID()
 
         cached_query = self.dns_query_cache.get(packet.qname, None)
-        print(cached_query)
         if (cached_query and cached_query['expire'] > now):
             query_ttl = cached_query['expire'] - now
             print(query_ttl)
