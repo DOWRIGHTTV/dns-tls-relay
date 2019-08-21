@@ -71,7 +71,7 @@ class DNSRelay:
     def SendtoClient(self, dns_query_response, client_address):
         ## Relaying packet from server back to host
         self.sock.sendto(dns_query_response, client_address)
-        print(f'Request Relayed to {client_address[0]}: {client_address[1]}')
+#        print(f'Request Relayed to {client_address[0]}: {client_address[1]}')
 
 class TLS:
     def __init__(self, DNSRelay):
@@ -139,7 +139,7 @@ class TLS:
                 data_from_server = secure_socket.recv(4096)
                 if (not data_from_server):
                     break
-                print('RECEIVED MESSAGES!')
+
                 self.ParseServerResponse(data_from_server)
             except (timeout, BlockingIOError):
                 break
