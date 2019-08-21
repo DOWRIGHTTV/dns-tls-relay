@@ -14,7 +14,7 @@ from socket import socket, timeout, AF_INET, SOCK_DGRAM, SOCK_STREAM, SHUT_WR
 
 from dns_packet_parser import PacketManipulation
 
-LISTENING_ADDRESS = '127.0.0.1'
+LISTENING_ADDRESS = '192.168.2.250'
 
 # must support DNS over TLS (not https/443, tcp/853)
 PUBLIC_SERVER_1 = '1.1.1.1'
@@ -157,8 +157,8 @@ class TLS:
             packet = PacketManipulation(data_from_server, protocol=TCP)
             packet.QueryInfo()
             if (packet.qtype == A_RECORD):
-            print(f'Secure Request Received from Server. DNS ID: {tcp_dns_id}')
-            # Checking client DNS ID and Address info to relay query back to host
+                print(f'Secure Request Received from Server. DNS ID: {tcp_dns_id}')
+                # Checking client DNS ID and Address info to relay query back to host
                 dns_query_info = self.dns_connection_tracker.get(packet.dns_id, None)
 
             if (packet.dns_id):
