@@ -61,8 +61,7 @@ class DNSRelay:
                 packet = PacketManipulation(data_from_client, protocol=UDP)
                 packet.Parse()
 
-                ## Matching IPV4 DNS queries only. All other will be dropped. Then creating a thread
-                ## to handle the rest of the process and sending client data in for relay to dns server
+                ## Matching IPV4 DNS queries only. All other will be dropped.
                 if (packet.qtype == A_RECORD):
                     self.ProcessQuery(packet, client_address)
 
@@ -79,12 +78,6 @@ class DNSRelay:
         if (not from_cache):
             self.AddtoCache(packet)
 
-    def AddtoCache(self, packet):
-        expire = time.time() + packet.query_ttl
-        self.dns_query_cache.update({packet.qname: {
-                                        'packet': packet.send_data,
-                                        'expire': expire}})
-
     # will check to see if query is cached/ has been requested before. if not will add to queue for standard query
     def ProcessQuery(self, packet, client_address):
         now = time.time()
@@ -97,10 +90,17 @@ class DNSRelay:
             cached_packet.Rewrite(dns_id=client_dns_id, TTL=query_ttl)
 
             self.SendtoClient(cached_packet, client_address, from_cache=True)
-
         else:
             self.TLS.AddtoQueue(packet, client_address)
 
+    # all queries will be added to cache/ overwrite existing entry
+    def AddtoCache(self, packet):
+        expire = time.time() + packet.query_ttl
+        self.dns_query_cache.update({packet.qname: {
+                                        'packet': packet.send_data,
+                                        'expire': expire}})
+
+    # automated process to flush the cache if expire time has been reached. runs every 1 minute.
     def ClearCache(self):
         while True:
             now = time.time()
