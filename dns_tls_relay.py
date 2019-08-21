@@ -15,7 +15,7 @@ from socket import socket, timeout, AF_INET, SOCK_DGRAM, SOCK_STREAM, SHUT_WR
 
 from dns_packet_parser import PacketManipulation
 
-LISTENING_ADDRESS = '127.0.0.1'
+LISTENING_ADDRESS = '192.168.2.250'
 
 # must support DNS over TLS (not https/443, tcp/853)
 PUBLIC_SERVER_1 = '1.1.1.1'
@@ -93,17 +93,10 @@ class DNSRelay:
         cached_query = self.dns_query_cache.get(packet.qname, None)
         if (cached_query and cached_query['expire'] > now):
             query_ttl = cached_query['expire'] - now
-            print(query_ttl)
             cached_packet = PacketManipulation(packet.data, protocol=UDP)
-            print(1)
             cached_packet.Rewrite(dns_id=client_dns_id, TTL=query_ttl)
-            print(2)
 
             self.SendtoClient(cached_packet, client_address, from_cache=True)
-            print('SENT')
-            complete = time.time()
-            total = complete - now
-            print(f'sent in {total} seconds')
 
         else:
             self.TLS.AddtoQueue(packet, client_address)
@@ -241,7 +234,7 @@ class TLS:
         now = round(time.time())
         try:
             sock = socket(AF_INET, SOCK_STREAM)
-            sock.bind(('10.0.2.15', 0))
+            sock.bind((LISTENING_ADDRESS, 0))
 
             context = ssl.create_default_context()
             context = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
