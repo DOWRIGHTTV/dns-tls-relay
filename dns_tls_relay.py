@@ -107,7 +107,6 @@ class TLS:
                     continue
 
             for secure_server, server_info in self.DNSRelay.dns_servers.items():
-                print(secure_server)
                 retry = now - server_info.get('retry', now)
                 if (server_info['tls'] or retry >= self.DNSRelay.tls_retry):
                     secure_socket = self.Connect(secure_server)
