@@ -14,7 +14,7 @@ from socket import socket, timeout, AF_INET, SOCK_DGRAM, SOCK_STREAM, SHUT_WR
 
 from dns_packet_parser import PacketManipulation
 
-LISTENING_ADDRESS = '192.168.2.250'
+LISTENING_ADDRESS = '127.0.0.1'
 
 # must support DNS over TLS (not https/443, tcp/853)
 PUBLIC_SERVER_1 = '1.1.1.1'
@@ -52,7 +52,7 @@ class DNSRelay:
         while True:
             try:
                 data_from_client, client_address = self.sock.recvfrom(1024)
-#                print(f'Receved data from client: {client_address[0]}:{client_address[1]}.')
+                print(f'Receved data from client: {client_address[0]}:{client_address[1]}.')
                 if (not data_from_client):
                     break
                 packet = PacketManipulation(data_from_client, protocol=UDP)
@@ -71,7 +71,7 @@ class DNSRelay:
     def SendtoClient(self, dns_query_response, client_address):
         ## Relaying packet from server back to host
         self.sock.sendto(dns_query_response, client_address)
-#                    print(f'Request Relayed to {client_address[0]}: {client_address[1]}')
+        print(f'Request Relayed to {client_address[0]}: {client_address[1]}')
 
 class TLS:
     def __init__(self, DNSRelay):
@@ -81,6 +81,7 @@ class TLS:
         self.dns_tls_queue = deque()
 
         self.unique_id_lock = threading.Lock()
+        self.dns_queue_lock = threading.Lock()
 
     def AddtoQueue(self, data_from_client, client_address):
         packet = PacketManipulation(data_from_client, protocol=UDP)
@@ -98,34 +99,39 @@ class TLS:
     # in queue over the connection.
     def ProcessQueue(self):
         while True:
-            msg_queue = self.dns_tls_queue.copy()
-            if (not msg_queue):
+            now = time.time()
+            with self.dns_queue_lock:
+                if (not self.dns_tls_queue):
                 # waiting 1ms before checking queue again for idle perf
-                time.sleep(.001)
-                continue
+                    time.sleep(.001)
+                    continue
 
             for secure_server, server_info in self.DNSRelay.dns_servers.items():
-                now = time.time()
+                print(secure_server)
                 retry = now - server_info.get('retry', now)
                 if (server_info['tls'] or retry >= self.DNSRelay.tls_retry):
                     secure_socket = self.Connect(secure_server)
                 if (secure_socket):
-                    self.SendQueries(secure_socket, msg_queue)
+                    self.QueryThreads(secure_socket)
 
-    def SendQueries(self, secure_socket, msg_queue):
+                    break
+
+    def QueryThreads(self, secure_socket):
+        threading.Thread(target=self.ReceiveQueries, args=(secure_socket,)).start()
+        time.sleep(.001)
+        threading.Thread(target=self.SendQueries, args=(secure_socket,)).start()
+
+    def SendQueries(self, secure_socket):
         try:
-            for message in msg_queue:
-                secure_socket.send(message)
+            with self.dns_queue_lock:
+                while self.dns_tls_queue:
+                    message = self.dns_tls_queue.popleft()
+                    secure_socket.send(message)
 
             secure_socket.shutdown(SHUT_WR)
 
         except Exception as E:
             print(f'TLSQUEUE | SEND: {E}')
-
-        # ensuring failed sends get removed from queue
-        msg_count = len(msg_queue)
-        for _ in range(msg_count):
-            self.dns_tls_queue.popleft()
 
     def ReceiveQueries(self, secure_socket):
         while True:
@@ -133,7 +139,7 @@ class TLS:
                 data_from_server = secure_socket.recv(4096)
                 if (not data_from_server):
                     break
-
+                print('RECEIVED MESSAGES!')
                 self.ParseServerResponse(data_from_server)
             except (timeout, BlockingIOError):
                 break
@@ -151,7 +157,7 @@ class TLS:
             # Checking the DNS ID in packet, Adjusted to ensure uniqueness
             packet = PacketManipulation(data_from_server, protocol=TCP)
             tcp_dns_id = packet.DNS()
-#                print(f'Secure Request Received from Server. DNS ID: {tcp_dns_id}')
+            print(f'Secure Request Received from Server. DNS ID: {tcp_dns_id}')
 
             # Checking client DNS ID and Address info to relay query back to host
             dns_query_info = self.dns_connection_tracker.get(tcp_dns_id, None)
@@ -191,7 +197,7 @@ class TLS:
         now = round(time.time())
         try:
             sock = socket(AF_INET, SOCK_STREAM)
-            sock.bind((LISTENING_ADDRESS, 0))
+            sock.bind(('10.0.2.15', 0))
 
             context = ssl.create_default_context()
             context = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
