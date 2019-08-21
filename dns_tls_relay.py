@@ -38,7 +38,6 @@ class DNSRelay:
 
         self.dns_query_cache = {}
 
-
     def Start(self):
         self.TLS = TLS(self)
 
@@ -75,8 +74,8 @@ class DNSRelay:
 #                    print(f'Request Relayed to {client_address[0]}: {client_address[1]}')
 
 class TLS:
-    def __init__(self, DNSProxy):
-        self.DNSProxy = DNSProxy
+    def __init__(self, DNSRelay):
+        self.DNSRelay = DNSRelay
 
         self.dns_connection_tracker = {}
         self.dns_tls_queue = deque()
@@ -105,10 +104,10 @@ class TLS:
                 time.sleep(.001)
                 continue
 
-            for secure_server, server_info in self.DNSProxy.dns_servers.items():
+            for secure_server, server_info in self.DNSRelay.dns_servers.items():
                 now = time.time()
                 retry = now - server_info.get('retry', now)
-                if (server_info['tls'] or retry >= self.DNSProxy.tls_retry):
+                if (server_info['tls'] or retry >= self.DNSRelay.tls_retry):
                     secure_socket = self.Connect(secure_server)
                 if (secure_socket):
                     self.SendQueries(secure_socket, msg_queue)
@@ -164,7 +163,7 @@ class TLS:
                 packet.Rewrite(dns_id=client_dns_id)
                 dns_query_response = packet.send_data
 
-                self.DNSProxy.SendtoClient(dns_query_response, client_address)
+                self.DNSRelay.SendtoClient(dns_query_response, client_address)
 
             self.dns_connection_tracker.pop(tcp_dns_id, None)
         except ValueError:
@@ -209,9 +208,12 @@ class TLS:
             secure_socket = None
 
         if (secure_socket):
-            self.DNSProxy.dns_servers[secure_server].update({'tls': True})
+            self.DNSRelay.dns_servers[secure_server].update({'tls': True})
         else:
-            self.DNSProxy.dns_servers[secure_server].update({'tls': False, 'retry': now})
+            self.DNSRelay.dns_servers[secure_server].update({'tls': False, 'retry': now})
 
         return secure_socket
 
+if __name__ == '__main__':
+    Relay = DNSRelay()
+    Relay.Start()

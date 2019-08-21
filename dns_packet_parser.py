@@ -106,4 +106,4 @@ class PacketManipulation:
 
         tcp_dns_payload = payload_length + tcp_dns_id + self.data[2:]
 
-        return(tcp_dns_payload)
+        return tcp_dns_payload
