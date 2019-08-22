@@ -56,7 +56,6 @@ class DNSRelay:
         while True:
             try:
                 data_from_client, client_address = self.sock.recvfrom(1024)
-                print(f'DNS REQUEST | {time.time()} | {client_address} | {packet.request}.')
                 if (not data_from_client):
                     break
 
@@ -72,7 +71,7 @@ class DNSRelay:
         try:
             packet = PacketManipulation(data_from_client, protocol=UDP)
             packet.Parse()
-
+            print(f'DNS REQUEST | {time.time()} | {client_address} | {packet.request}.')
             ## Matching IPV4 DNS queries only. All other will be dropped.
             if (packet.qtype == A_RECORD):
                 self.ProcessQuery(packet, client_address)
