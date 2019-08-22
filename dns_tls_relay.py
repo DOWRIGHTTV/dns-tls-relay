@@ -15,7 +15,7 @@ from socket import socket, timeout,error, AF_INET, SOCK_DGRAM, SOCK_STREAM, SHUT
 
 from dns_packet_parser import PacketManipulation
 
-LISTENING_ADDRESS = '10.0.2.15'
+LISTENING_ADDRESS = '192.168.2.250'
 
 # must support DNS over TLS (not https/443, tcp/853)
 PUBLIC_SERVER_1 = '1.1.1.1'
@@ -62,7 +62,7 @@ class DNSRelay:
 
                 threading.Thread(target=self.ParseRequests, args=(data_from_client, client_address)).start()
                 # switching between no sleep, 1ms, and 10ms to see if performance gain by givin others clock cycles
-                time.sleep(.01)
+#                time.sleep(.01)
             except error:
                 break
 
@@ -182,12 +182,14 @@ class TLSRelay:
     def SendQueries(self, secure_socket):
         try:
             with self.dns_queue_lock:
+                msg_count = len(self.dns_tls_queue)
                 while self.dns_tls_queue:
                     message = self.dns_tls_queue.popleft()
 
                     secure_socket.send(message)
 
             secure_socket.shutdown(SHUT_WR)
+            print(f'SENT {msg_count} MESSAGES!')
 
         except error as E:
             print(f'TLSQUEUE | SEND: {E}')
