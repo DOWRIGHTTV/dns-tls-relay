@@ -71,9 +71,10 @@ class DNSRelay:
         try:
             packet = PacketManipulation(data_from_client, protocol=UDP)
             packet.Parse()
-            print(f'DNS REQUEST | {time.time()} | {client_address} | {packet.request}.')
+
             ## Matching IPV4 DNS queries only. All other will be dropped.
             if (packet.qtype == A_RECORD):
+                print(f'DNS REQUEST | {time.time()} | {client_address} | {packet.request}.')
                 self.ProcessQuery(packet, client_address)
 
         except Exception as E:
