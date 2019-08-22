@@ -154,6 +154,7 @@ class TLSRelay:
         self.dns_connection_tracker.update({tcp_dns_id: {'client_id': packet.dns_id, 'client_address': client_address}})
 
         self.dns_tls_queue.append(dns_query)
+        print(f'ADDED TO QUEUE: {client_address} | {packet.request}')
 
     ## Queue Handler will make a TLS connection to remote dns server/ start a response handler thread and send all requests
     # in queue over the connection.
