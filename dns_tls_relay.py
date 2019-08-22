@@ -56,7 +56,7 @@ class DNSRelay:
         while True:
             try:
                 data_from_client, client_address = self.sock.recvfrom(1024)
-                print(f'DNS REQUEST | {time.time()} | {client_address[0]}:{client_address[1]}.')
+                print(f'DNS REQUEST | {time.time()} | {client_address} | {packet.request}.')
                 if (not data_from_client):
                     break
 
