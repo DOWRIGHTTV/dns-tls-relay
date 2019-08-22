@@ -11,11 +11,11 @@ import ssl
 
 from copy import deepcopy
 from collections import deque
-from socket import socket, timeout, AF_INET, SOCK_DGRAM, SOCK_STREAM, SHUT_WR
+from socket import socket, timeout,error, AF_INET, SOCK_DGRAM, SOCK_STREAM, SHUT_WR
 
 from dns_packet_parser import PacketManipulation
 
-LISTENING_ADDRESS = '192.168.2.250'
+LISTENING_ADDRESS = '10.0.2.15'
 
 # must support DNS over TLS (not https/443, tcp/853)
 PUBLIC_SERVER_1 = '1.1.1.1'
@@ -27,6 +27,7 @@ UDP = 17
 A_RECORD = 1
 DNS_PORT = 53
 DNS_TLS_PORT = 853
+DEFAULT_TTL = 3600
 
 
 class DNSRelay:
@@ -37,14 +38,14 @@ class DNSRelay:
 
         self.tls_retry = 60
 
-        self.dns_query_cache = {}
         self.cache_lock = threading.Lock()
 
     def Start(self):
-        self.TLS = TLS(self)
+        self.DNSCache = DNSCache()
+        self.TLSRelay = TLSRelay(self)
 
-        threading.Thread(target=self.ClearCache).start()
-        threading.Thread(target=self.TLS.ProcessQueue).start()
+        threading.Thread(target=self.DNSCache.AutoClear).start()
+        threading.Thread(target=self.TLSRelay.ProcessQueue).start()
         self.Main()
 
     def Main(self):
@@ -55,53 +56,76 @@ class DNSRelay:
         while True:
             try:
                 data_from_client, client_address = self.sock.recvfrom(1024)
-#                print(f'Receved data from client: {client_address[0]}:{client_address[1]}.')
+ #               print(f'Receved data from client: {client_address[0]}:{client_address[1]}.')
                 if (not data_from_client):
                     break
-                packet = PacketManipulation(data_from_client, protocol=UDP)
-                packet.Parse()
 
-                ## Matching IPV4 DNS queries only. All other will be dropped.
-                if (packet.qtype == A_RECORD):
-                    self.ProcessQuery(packet, client_address)
-
-            except Exception as E:
-                print(f'MAIN: {E}')
+                threading.Thread(target=self.ParseRequests, args=(data_from_client, client_address)).start()
+                # switching between no sleep, 1ms, and 10ms to see if performance gain by givin others clock cycles
+                time.sleep(.01)
+            except error:
+                break
 
         self.Main()
+
+    def ParseRequests(self, data_from_client, client_address):
+        try:
+            packet = PacketManipulation(data_from_client, protocol=UDP)
+            packet.Parse()
+
+            ## Matching IPV4 DNS queries only. All other will be dropped.
+            if (packet.qtype == A_RECORD):
+                self.ProcessQuery(packet, client_address)
+
+        except Exception as E:
+            print(f'MAIN: {E}')
 
     def SendtoClient(self, packet, client_address, from_cache=False):
         ## Relaying packet from server back to host
         self.sock.sendto(packet.send_data, client_address)
 #        print(f'Request Relayed to {client_address[0]}: {client_address[1]}')
 
-        if (not from_cache):
-            self.AddtoCache(packet)
+        if (not from_cache and packet.dns_payload):
+            self.DNSCache.Add(packet)
 
     # will check to see if query is cached/ has been requested before. if not will add to queue for standard query
     def ProcessQuery(self, packet, client_address):
-        now = time.time()
-        client_dns_id = packet.DNSID()
-
-        cached_query = self.dns_query_cache.get(packet.qname, None)
-        if (cached_query and cached_query['expire'] > now):
-            query_ttl = cached_query['expire'] - now
-            cached_packet = PacketManipulation(packet.data, protocol=UDP)
-            cached_packet.Rewrite(dns_id=client_dns_id, TTL=query_ttl)
-
+        cached_packet = self.DNSCache.Search(packet.request, packet.dns_id)
+        if (cached_packet):
             self.SendtoClient(cached_packet, client_address, from_cache=True)
         else:
-            self.TLS.AddtoQueue(packet, client_address)
+            self.TLSRelay.AddtoQueue(packet, client_address)
+
+class DNSCache:
+    def __init__(self):
+        self.dns_query_cache = {}
 
     # all queries will be added to cache/ overwrite existing entry
-    def AddtoCache(self, packet):
-        expire = time.time() + packet.query_ttl
-        self.dns_query_cache.update({packet.qname: {
-                                        'packet': packet.send_data,
-                                        'expire': expire}})
+    def Add(self, packet):
+        expire = int(time.time()) + packet.cache_ttl
+        if (packet.request not in self.dns_query_cache and packet.dns_payload):
+            self.dns_query_cache.update({packet.request: {
+                                            'packet': packet.send_data,
+                                            'expire': expire}})
+
+    def Search(self, request, client_dns_id):
+        now = int(time.time())
+        cached_query = self.dns_query_cache.get(request, None)
+        if (cached_query and cached_query['expire'] > now):
+            calculated_ttl = cached_query['expire'] - now
+            cached_packet = PacketManipulation(cached_query['packet'], protocol=UDP)
+            cached_packet.Parse()
+
+#            print(f'CALCULATED TTL: {calculated_ttl}')
+            if (calculated_ttl > DEFAULT_TTL):
+                calculated_ttl = DEFAULT_TTL
+
+            cached_packet.Rewrite(dns_id=client_dns_id, response_ttl=calculated_ttl)
+
+            return cached_packet
 
     # automated process to flush the cache if expire time has been reached. runs every 1 minute.
-    def ClearCache(self):
+    def AutoClear(self):
         while True:
             now = time.time()
             query_cache = deepcopy(self.dns_query_cache)
@@ -111,7 +135,7 @@ class DNSRelay:
 
             time.sleep(1 * 60)
 
-class TLS:
+class TLSRelay:
     def __init__(self, DNSRelay):
         self.DNSRelay = DNSRelay
 
@@ -122,15 +146,13 @@ class TLS:
         self.dns_queue_lock = threading.Lock()
 
     def AddtoQueue(self, packet, client_address):
-        client_dns_id = packet.DNSID()
-
         tcp_dns_id = self.GenerateIDandStore()
-        dns_payload = packet.UDPtoTLS(tcp_dns_id)
+        dns_query = packet.UDPtoTLS(tcp_dns_id)
 
         ## Adding client connection info to tracker to be used by response handler
-        self.dns_connection_tracker.update({tcp_dns_id: {'client_id': client_dns_id, 'client_address': client_address}})
+        self.dns_connection_tracker.update({tcp_dns_id: {'client_id': packet.dns_id, 'client_address': client_address}})
 
-        self.dns_tls_queue.append(dns_payload)
+        self.dns_tls_queue.append(dns_query)
 
     ## Queue Handler will make a TLS connection to remote dns server/ start a response handler thread and send all requests
     # in queue over the connection.
@@ -167,7 +189,7 @@ class TLS:
 
             secure_socket.shutdown(SHUT_WR)
 
-        except Exception as E:
+        except error as E:
             print(f'TLSQUEUE | SEND: {E}')
 
     def ReceiveQueries(self, secure_socket):
@@ -178,10 +200,7 @@ class TLS:
                     break
 
                 self.ParseServerResponse(data_from_server)
-            except (timeout, BlockingIOError):
-                break
-            except Exception:
-                traceback.print_exc()
+            except (timeout, error):
                 break
 
         secure_socket.close()
@@ -194,12 +213,11 @@ class TLS:
             # Checking the DNS ID in packet, Adjusted to ensure uniqueness
             packet = PacketManipulation(data_from_server, protocol=TCP)
             packet.Parse()
-            if (packet.qtype == A_RECORD):
+            if (packet.dns_response and packet.qtype == A_RECORD):
                 print(f'Secure Request Received from Server. DNS ID: {packet.dns_id}')
                 # Checking client DNS ID and Address info to relay query back to host
                 dns_query_info = self.dns_connection_tracker.get(packet.dns_id, None)
 
-            if (packet.dns_id and packet.qtype == A_RECORD):
                 client_dns_id = dns_query_info.get('client_id')
                 client_address = dns_query_info.get('client_address')
 
@@ -231,7 +249,7 @@ class TLS:
     # timestamp will be used to re attempt to connect after retry limit exceeded in message
     # queue handler method
     def Connect(self, secure_server):
-        now = round(time.time())
+        now = time.time()
         try:
             sock = socket(AF_INET, SOCK_STREAM)
             sock.bind((LISTENING_ADDRESS, 0))
@@ -247,7 +265,7 @@ class TLS:
 
             secure_socket = context.wrap_socket(sock, server_hostname=secure_server)
             secure_socket.connect((secure_server, DNS_TLS_PORT))
-        except Exception:
+        except error:
             secure_socket = None
 
         if (secure_socket):
