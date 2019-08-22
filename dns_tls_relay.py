@@ -59,7 +59,7 @@ class DNSRelay:
                 if (not data_from_client):
                     break
 
-                threading.Thread(target=self.ParseRequests, args=(data_from_client, client_address)).start()
+                self.ParseRequests(data_from_client, client_address)
                 # switching between no sleep, 1ms, and 10ms to see if performance gain by givin others clock cycles
 #                time.sleep(.01)
             except error:
@@ -75,7 +75,7 @@ class DNSRelay:
             ## Matching IPV4 DNS queries only. All other will be dropped.
             if (packet.qtype == A_RECORD):
                 print(f'DNS REQUEST | {time.time()} | {client_address} | {packet.request}.')
-                self.ProcessQuery(packet, client_address)
+                threading.Thread(target=self.ProcessQuery, args=(packet, client_address)).start()
 
         except Exception as E:
             print(f'MAIN: {E}')
