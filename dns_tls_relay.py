@@ -92,6 +92,7 @@ class DNSRelay:
     def ProcessQuery(self, packet, client_address):
         cached_packet = self.DNSCache.Search(packet.request, packet.dns_id)
         if (cached_packet):
+            print(f'CACHED RESPONSE: {packet.request}.')
             self.SendtoClient(cached_packet, client_address, from_cache=True)
         else:
             self.TLSRelay.AddtoQueue(packet, client_address)
