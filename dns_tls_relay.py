@@ -56,7 +56,7 @@ class DNSRelay:
         while True:
             try:
                 data_from_client, client_address = self.sock.recvfrom(1024)
- #               print(f'Receved data from client: {client_address[0]}:{client_address[1]}.')
+                print(f'DNS REQUEST | {time.time()} | {client_address[0]}:{client_address[1]}.')
                 if (not data_from_client):
                     break
 
@@ -214,7 +214,7 @@ class TLSRelay:
             packet = PacketManipulation(data_from_server, protocol=TCP)
             packet.Parse()
             if (packet.dns_response and packet.qtype == A_RECORD):
-                print(f'Secure Request Received from Server. DNS ID: {packet.dns_id}')
+#                print(f'Secure Request Received from Server. DNS ID: {packet.dns_id}')
                 # Checking client DNS ID and Address info to relay query back to host
                 dns_query_info = self.dns_connection_tracker.get(packet.dns_id, None)
 

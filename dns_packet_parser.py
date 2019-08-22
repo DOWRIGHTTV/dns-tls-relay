@@ -34,8 +34,8 @@ class PacketManipulation:
         self.QueryInfo()
         if (self.qtype == A_RECORD):
             self.QName()
-        if (self.dns_response):
-            self.SplitQuery()
+            if (self.dns_response):
+                self.SplitQuery()
 
     def DNSID(self):
         dns_id = struct.unpack('!H', self.data[:2])[0]
@@ -50,8 +50,8 @@ class PacketManipulation:
         if (self.dns_header[2] & 1 << 7): # Response
             self.dns_response = True
 
-        dns_query = self.dns_payload.split(b'\x00',1)
-        if (len(dns_query) >= 2):
+        try:
+            dns_query = self.dns_payload.split(b'\x00',1)
             dnsQ = struct.unpack('!2H', dns_query[1][0:4])
             self.query_name = dns_query[0]
             self.qtype = dnsQ[0]
@@ -59,6 +59,8 @@ class PacketManipulation:
             self.request_record = dns_query[1][4:]
 
             self.dns_query = self.query_name + b'\x00' + dns_query[1][0:4]
+        except (struct.error, IndexError):
+            pass
 
     def QName(self):
         b = len(self.query_name)
