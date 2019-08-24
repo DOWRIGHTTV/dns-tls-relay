@@ -7,6 +7,7 @@ UDP = 17
 
 A_RECORD = 1
 DEFAULT_TTL = 3600
+MINIMUM_TTL = 300
 
 
 class PacketManipulation:
@@ -105,10 +106,15 @@ class PacketManipulation:
         for rr_part in self.request_record_split[1:]:
             bytes_check = rr_part[2:8]
             type_check, ttl_check = struct.unpack('!HL', bytes_check)
-            if (type_check == A_RECORD and ttl_check > response_ttl):
+            if (type_check == A_RECORD and ttl_check < MINIMUM_TTL):
+                ttl_bytes_override = ttl_bytes_override = struct.pack('!L', MINIMUM_TTL)
+                request_record += self.record_name + rr_part[:4] + ttl_bytes_override + rr_part[8:]
+            elif (type_check == A_RECORD and ttl_check > response_ttl):
                 request_record += self.record_name + rr_part[:4] + ttl_bytes_override + rr_part[8:]
             else:
                 request_record += self.record_name + rr_part
+
+        if (request_record):
             self.cache_ttl = ttl_check
 
         # Replacing tcp dns id with original client dns id if converting back from tcp/tls.

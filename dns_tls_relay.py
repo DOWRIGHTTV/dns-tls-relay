@@ -15,7 +15,7 @@ from socket import socket, timeout,error, AF_INET, SOCK_DGRAM, SOCK_STREAM, SHUT
 
 from dns_packet_parser import PacketManipulation
 
-LISTENING_ADDRESS = '192.168.2.250'
+LISTENING_ADDRESS = '10.0.2.15'
 
 # must support DNS over TLS (not https/443, tcp/853)
 PUBLIC_SERVER_1 = '1.1.1.1'
@@ -56,12 +56,13 @@ class DNSRelay:
         while True:
             try:
                 data_from_client, client_address = self.sock.recvfrom(1024)
+ #               print(f'Receved data from client: {client_address[0]}:{client_address[1]}.')
                 if (not data_from_client):
                     break
 
-                self.ParseRequests(data_from_client, client_address)
+                threading.Thread(target=self.ParseRequests, args=(data_from_client, client_address)).start()
                 # switching between no sleep, 1ms, and 10ms to see if performance gain by givin others clock cycles
-#                time.sleep(.01)
+                time.sleep(.01)
             except error:
                 break
 
@@ -74,8 +75,7 @@ class DNSRelay:
 
             ## Matching IPV4 DNS queries only. All other will be dropped.
             if (packet.qtype == A_RECORD):
-                print(f'DNS REQUEST | {time.time()} | {client_address} | {packet.request}.')
-                threading.Thread(target=self.ProcessQuery, args=(packet, client_address)).start()
+                self.ProcessQuery(packet, client_address)
 
         except Exception as E:
             print(f'MAIN: {E}')
@@ -92,7 +92,6 @@ class DNSRelay:
     def ProcessQuery(self, packet, client_address):
         cached_packet = self.DNSCache.Search(packet.request, packet.dns_id)
         if (cached_packet):
-            print(f'CACHED RESPONSE: {packet.request}.')
             self.SendtoClient(cached_packet, client_address, from_cache=True)
         else:
             self.TLSRelay.AddtoQueue(packet, client_address)
@@ -154,7 +153,6 @@ class TLSRelay:
         self.dns_connection_tracker.update({tcp_dns_id: {'client_id': packet.dns_id, 'client_address': client_address}})
 
         self.dns_tls_queue.append(dns_query)
-        print(f'ADDED TO QUEUE: {client_address} | {packet.request}')
 
     ## Queue Handler will make a TLS connection to remote dns server/ start a response handler thread and send all requests
     # in queue over the connection.
@@ -184,14 +182,12 @@ class TLSRelay:
     def SendQueries(self, secure_socket):
         try:
             with self.dns_queue_lock:
-                msg_count = len(self.dns_tls_queue)
                 while self.dns_tls_queue:
                     message = self.dns_tls_queue.popleft()
 
                     secure_socket.send(message)
 
             secure_socket.shutdown(SHUT_WR)
-            print(f'SENT {msg_count} MESSAGES!')
 
         except error as E:
             print(f'TLSQUEUE | SEND: {E}')
@@ -218,7 +214,7 @@ class TLSRelay:
             packet = PacketManipulation(data_from_server, protocol=TCP)
             packet.Parse()
             if (packet.dns_response and packet.qtype == A_RECORD):
-#                print(f'Secure Request Received from Server. DNS ID: {packet.dns_id}')
+                print(f'Secure Request Received from Server. DNS ID: {packet.dns_id}')
                 # Checking client DNS ID and Address info to relay query back to host
                 dns_query_info = self.dns_connection_tracker.get(packet.dns_id, None)
 
