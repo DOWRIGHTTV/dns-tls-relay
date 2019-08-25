@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 
 import struct
+import traceback
 
 TCP = 6
 UDP = 17
@@ -8,6 +9,7 @@ UDP = 17
 A_RECORD = 1
 DEFAULT_TTL = 3600
 MINIMUM_TTL = 300
+MAX_A_RECORD_COUNT = 2
 
 
 class PacketManipulation:
@@ -31,7 +33,7 @@ class PacketManipulation:
         self.cache_header = b''
         self.send_data = b''
 
-    def Parse(self,):
+    def Parse(self):
         self.QueryInfo()
         if (self.qtype == A_RECORD):
             self.QName()
@@ -103,15 +105,22 @@ class PacketManipulation:
         # reset request record var then iterating over record recieved from server and rewriting the dns record TTL
         # to 1 hour | other records like SOA are unaffected
         request_record = b''
-        for rr_part in self.request_record_split[1:]:
+        for count, rr_part in enumerate(self.request_record_split[1:]):
+            add_record = False
             bytes_check = rr_part[2:8]
             type_check, ttl_check = struct.unpack('!HL', bytes_check)
-            if (type_check == A_RECORD and ttl_check < MINIMUM_TTL):
-                ttl_bytes_override = ttl_bytes_override = struct.pack('!L', MINIMUM_TTL)
-                request_record += self.record_name + rr_part[:4] + ttl_bytes_override + rr_part[8:]
-            elif (type_check == A_RECORD and ttl_check > response_ttl):
-                request_record += self.record_name + rr_part[:4] + ttl_bytes_override + rr_part[8:]
-            else:
+            if (type_check == A_RECORD and count <= MAX_A_RECORD_COUNT):
+                if (ttl_check < MINIMUM_TTL):
+                    ttl_bytes_override = ttl_bytes_override = struct.pack('!L', MINIMUM_TTL)
+                    add_record = True
+                elif (ttl_check > response_ttl):
+                    add_record = True
+
+                if (add_record):
+                    request_record += self.record_name + rr_part[:4] + ttl_bytes_override + rr_part[8:]
+                    continue
+
+            if (type_check != A_RECORD or count <= MAX_A_RECORD_COUNT):
                 request_record += self.record_name + rr_part
 
         if (request_record):
@@ -123,6 +132,18 @@ class PacketManipulation:
             self.send_data += struct.pack('!H', dns_id)
 
         self.send_data += self.dns_header + self.dns_query + request_record
+
+    def RevertResponse(self):
+        dns_payload = self.data[12:]
+
+        # creating empty dns header, with standard query flag and recursion flag. will be rewritten with proper dns id
+        # at another point in the process
+        dns_header = struct.pack('H4B3H', 0,1,0,0,1,0,0,0)
+
+        dns_query = dns_payload.split(b'\x00',1)
+        query_name = dns_query[0]
+
+        self.data = dns_header + query_name + b'\x00' + dns_query[1][0:4]
 
     def UDPtoTLS(self, dns_id):
         payload_length = struct.pack('!H', len(self.data))

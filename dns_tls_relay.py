@@ -10,12 +10,12 @@ import random
 import ssl
 
 from copy import deepcopy
-from collections import deque
+from collections import deque, Counter
 from socket import socket, timeout,error, AF_INET, SOCK_DGRAM, SOCK_STREAM, SHUT_WR
 
 from dns_packet_parser import PacketManipulation
 
-LISTENING_ADDRESS = '192.168.2.250'
+LISTENING_ADDRESS = '192.168.5.135'
 
 # must support DNS over TLS (not https/443, tcp/853)
 PUBLIC_SERVER_1 = '1.1.1.1'
@@ -28,7 +28,9 @@ A_RECORD = 1
 DNS_PORT = 53
 DNS_TLS_PORT = 853
 DEFAULT_TTL = 3600
+FALLBACK_TTL = 150
 
+TOP_DOMAIN_COUNT = 20
 
 class DNSRelay:
     def __init__(self):
@@ -41,10 +43,11 @@ class DNSRelay:
         self.cache_lock = threading.Lock()
 
     def Start(self):
-        self.DNSCache = DNSCache()
+        self.DNSCache = DNSCache(self)
         self.TLSRelay = TLSRelay(self)
 
         threading.Thread(target=self.DNSCache.AutoClear).start()
+        threading.Thread(target=self.DNSCache.TopDomains).start()
         threading.Thread(target=self.TLSRelay.ProcessQueue).start()
         self.Main()
 
@@ -85,55 +88,92 @@ class DNSRelay:
         self.sock.sendto(packet.send_data, client_address)
 #        print(f'Request Relayed to {client_address[0]}: {client_address[1]}')
 
-        if (not from_cache and packet.dns_payload):
-            self.DNSCache.Add(packet)
-
     # will check to see if query is cached/ has been requested before. if not will add to queue for standard query
     def ProcessQuery(self, packet, client_address):
         cached_packet = self.DNSCache.Search(packet.request, packet.dns_id)
         if (cached_packet):
             self.SendtoClient(cached_packet, client_address, from_cache=True)
+#            print(f'SENT CACHED RESPONSE FOR {packet.request}')
         else:
             self.TLSRelay.AddtoQueue(packet, client_address)
 
 class DNSCache:
-    def __init__(self):
+    def __init__(self, DNSRelay):
+        self.DNSRelay = DNSRelay
         self.dns_query_cache = {}
 
-    # all queries will be added to cache/ overwrite existing entry
-    def Add(self, packet):
+        self.domain_counter = Counter()
+        self.top_domains = {}
+
+        self.domain_counter_lock = threading.Lock()
+
+    # queries will be added to cache if it is not already cached or has expired or if the dns response is the
+    # result from an internal dns request for top domains
+    def Add(self, packet, client_address):
         expire = int(time.time()) + packet.cache_ttl
-        if (packet.request not in self.dns_query_cache and packet.dns_payload):
+        print(f'EXPIRE IN {expire} | TTL {packet.cache_ttl}')
+        client_ip, client_port = client_address
+        if ((packet.request not in self.dns_query_cache and packet.dns_payload)
+                or (not client_ip and not client_port)):
             self.dns_query_cache.update({packet.request: {
                                             'packet': packet.send_data,
                                             'expire': expire}})
+
+#            print(f'ADDED {packet.request} TO CACHE')
 
     def Search(self, request, client_dns_id):
         now = int(time.time())
         cached_query = self.dns_query_cache.get(request, None)
         if (cached_query and cached_query['expire'] > now):
-            calculated_ttl = cached_query['expire'] - now
             cached_packet = PacketManipulation(cached_query['packet'], protocol=UDP)
             cached_packet.Parse()
 
 #            print(f'CALCULATED TTL: {calculated_ttl}')
+            calculated_ttl = cached_query['expire'] - now
             if (calculated_ttl > DEFAULT_TTL):
                 calculated_ttl = DEFAULT_TTL
+            elif (calculated_ttl < 0):
+                calculated_ttl = FALLBACK_TTL
 
             cached_packet.Rewrite(dns_id=client_dns_id, response_ttl=calculated_ttl)
 
             return cached_packet
 
+    def IncrementCounter(self, domain):
+        with self.domain_counter_lock:
+            self.domain_counter[domain] += 1
+
     # automated process to flush the cache if expire time has been reached. runs every 1 minute.
     def AutoClear(self):
+        time.sleep(10)
         while True:
             now = time.time()
+            self.top_domains = {domain for count, domain in enumerate(self.domain_counter) \
+                if count < TOP_DOMAIN_COUNT}
             query_cache = deepcopy(self.dns_query_cache)
             for domain, info in query_cache.items():
-                if (info['expire'] > now):
+                if (info['expire'] > now and domain not in self.top_domains):
                     self.dns_query_cache.pop(domain, None)
 
-            time.sleep(1 * 60)
+            time.sleep(15)
+
+    # automated process to keep top 20 queried domains permanently in cache. it will use the current caches packet to generate
+    # a new packet and add to the standard tls queue. the recieving end will know how to handle this by settings the client address
+    # to none in the session tracker.
+    def TopDomains(self):
+        client_address = (None, None)
+        while True:
+            time.sleep(15)
+            for domain in self.top_domains:
+                cached_packet_info = self.dns_query_cache.get(domain, None)
+                print(cached_packet_info)
+                if (cached_packet_info):
+                    # reverting the dns response packet to a standard query
+                    packet = PacketManipulation(cached_packet_info['packet'], protocol=UDP)
+                    packet.RevertResponse()
+
+                    self.DNSRelay.TLSRelay.AddtoQueue(packet, client_address)
+#                    print(f'ADDED PACKET FROM CACHE TO QUEUE | {domain} !!!! :D')
 
 class TLSRelay:
     def __init__(self, DNSRelay):
@@ -176,7 +216,7 @@ class TLSRelay:
 
     def QueryThreads(self, secure_socket):
         threading.Thread(target=self.ReceiveQueries, args=(secure_socket,)).start()
-        time.sleep(.001)
+        time.sleep(.0001)
         threading.Thread(target=self.SendQueries, args=(secure_socket,)).start()
 
     def SendQueries(self, secure_socket):
@@ -214,18 +254,25 @@ class TLSRelay:
             packet = PacketManipulation(data_from_server, protocol=TCP)
             packet.Parse()
             if (packet.dns_response and packet.qtype == A_RECORD):
-                print(f'Secure Request Received from Server. DNS ID: {packet.dns_id}')
+                print(f'Secure Request Received from Server. DNS ID: {packet.dns_id} | {packet.request}')
                 # Checking client DNS ID and Address info to relay query back to host
                 dns_query_info = self.dns_connection_tracker.get(packet.dns_id, None)
 
                 client_dns_id = dns_query_info.get('client_id')
                 client_address = dns_query_info.get('client_address')
-
-                ## Parsing packet and rewriting TTL to 5 minutes and changing DNS ID back to original.
+                ## Parsing packet and rewriting TTL to minimum 5 minutes/max 1 hour and changing DNS ID back to original.
                 packet.Rewrite(dns_id=client_dns_id)
 
-                self.DNSRelay.SendtoClient(packet, client_address)
+                client_ip, client_port = client_address
+                # these vars will be set to none if it was a request generated by the caching system.
+                if (client_ip and client_port):
+                    self.DNSRelay.SendtoClient(packet, client_address)
 
+                # adding packets to cache if not already in and incrimenting the counter for the requested domain.
+                self.DNSRelay.DNSCache.Add(packet, client_address)
+                self.DNSRelay.DNSCache.IncrementCounter(packet.request)
+
+            #see if this can be in the if statement. cant remember why it was pulled out.
             self.dns_connection_tracker.pop(packet.dns_id, None)
         except ValueError:
             # to troubleshoot empty separator error
