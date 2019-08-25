@@ -144,7 +144,6 @@ class DNSCache:
 
     # automated process to flush the cache if expire time has been reached. runs every 1 minute.
     def AutoClear(self):
-        time.sleep(10)
         while True:
             now = time.time()
             self.top_domains = {domain for count, domain in enumerate(self.domain_counter) \
@@ -154,7 +153,7 @@ class DNSCache:
                 if (info['expire'] > now and domain not in self.top_domains):
                     self.dns_query_cache.pop(domain, None)
 
-            time.sleep(15)
+            time.sleep(5 * 60)
 
     # automated process to keep top 20 queried domains permanently in cache. it will use the current caches packet to generate
     # a new packet and add to the standard tls queue. the recieving end will know how to handle this by settings the client address
@@ -162,7 +161,6 @@ class DNSCache:
     def TopDomains(self):
         client_address = (None, None)
         while True:
-            time.sleep(15)
             for domain in self.top_domains:
                 cached_packet_info = self.dns_query_cache.get(domain, None)
                 if (cached_packet_info):
@@ -172,6 +170,7 @@ class DNSCache:
 
                     self.DNSRelay.TLSRelay.AddtoQueue(packet, client_address)
 #                    print(f'ADDED PACKET FROM CACHE TO QUEUE | {domain} !!!! :D')
+            time.sleep(5 * 60)
 
 class TLSRelay:
     def __init__(self, DNSRelay):
