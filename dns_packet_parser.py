@@ -97,6 +97,7 @@ class PacketManipulation:
             self.record_name = self.query_name
 
     def Rewrite(self, dns_id=None, response_ttl=DEFAULT_TTL):
+        minmium_ttl_bytes = ttl_bytes_override = struct.pack('!L', MINIMUM_TTL)
         if (response_ttl == DEFAULT_TTL):
             ttl_bytes_override = struct.pack('!L', DEFAULT_TTL)
         else:
@@ -104,27 +105,38 @@ class PacketManipulation:
 
         # reset request record var then iterating over record recieved from server and rewriting the dns record TTL
         # to 1 hour | other records like SOA are unaffected
+        print(self.data)
+        print(self.request_record_split)
+        a_record = 0
         request_record = b''
         for count, rr_part in enumerate(self.request_record_split[1:]):
-            add_record = False
             bytes_check = rr_part[2:8]
             type_check, ttl_check = struct.unpack('!HL', bytes_check)
-            if (type_check == A_RECORD and count <= MAX_A_RECORD_COUNT):
+            if (type_check == A_RECORD):
                 if (ttl_check < MINIMUM_TTL):
-                    ttl_bytes_override = ttl_bytes_override = struct.pack('!L', MINIMUM_TTL)
-                    add_record = True
+                    temp_rr = self.record_name + rr_part[:4] + minmium_ttl_bytes + rr_part[8:]
+
                 elif (ttl_check > response_ttl):
-                    add_record = True
+                    temp_rr = self.record_name + rr_part[:4] + ttl_bytes_override + rr_part[8:]
 
-                if (add_record):
-                    request_record += self.record_name + rr_part[:4] + ttl_bytes_override + rr_part[8:]
-                    continue
+                else:
+                    temp_rr = self.record_name + rr_part
 
-            if (type_check != A_RECORD or count <= MAX_A_RECORD_COUNT):
+#                if (count <= MAX_A_RECORD_COUNT or len(rr_part) > 14):
+                request_record += temp_rr
+
+#                a_record += 1
+            else:
                 request_record += self.record_name + rr_part
 
         if (request_record):
             self.cache_ttl = ttl_check
+
+        # rewriting the answer count to 3 if more were present due to only allowing max of 3 by policy
+        if (a_record > 3):
+            answer_count = struct.pack('!H', 4)
+            self.dns_header = self.dns_header[:6] + answer_count + self.dns_header[8:]
+            request_record += self.dns_pointer + self.request_record_split[-1]
 
         # Replacing tcp dns id with original client dns id if converting back from tcp/tls.
         if (dns_id):
