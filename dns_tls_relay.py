@@ -111,7 +111,6 @@ class DNSCache:
     # result from an internal dns request for top domains
     def Add(self, packet, client_address):
         expire = int(time.time()) + packet.cache_ttl
-        print(f'EXPIRE IN {expire} | TTL {packet.cache_ttl}')
         client_ip, client_port = client_address
         if ((packet.request not in self.dns_query_cache and packet.dns_payload)
                 or (not client_ip and not client_port)):
@@ -166,7 +165,6 @@ class DNSCache:
             time.sleep(15)
             for domain in self.top_domains:
                 cached_packet_info = self.dns_query_cache.get(domain, None)
-                print(cached_packet_info)
                 if (cached_packet_info):
                     # reverting the dns response packet to a standard query
                     packet = PacketManipulation(cached_packet_info['packet'], protocol=UDP)
