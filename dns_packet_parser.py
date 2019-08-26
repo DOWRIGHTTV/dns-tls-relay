@@ -87,39 +87,39 @@ class PacketManipulation:
         self.qtype = record_type_info[0]
         self.qclass = record_type_info[1]
 
-        name_length = len(self.query_name)
-        question_length = name_length + 5
+        self.name_length = len(self.query_name)
+        question_length = self.name_length + 5
 
         self.question_record = dns_payload[:question_length]
         self.resource_record = dns_payload[question_length:]
 
-    def GetRecordType(self, data, name_length):
-        record_type = struct.unpack('!H', data[name_length:name_length+2])[0]
+    def GetRecordType(self, data):
+        if (data.startswith(b'\xc0')):
+            self.name_length = 2
+        nlen = self.name_length
+
+        record_type = struct.unpack('!H', data[nlen:nlen+2])[0]
         if (record_type == A_RECORD):
-            record_length = 14 + name_length
+            record_length = 14 + nlen
 
         elif (record_type in {CNAME, SOA}):
-            data_length = struct.unpack('!H', data[name_length+8:name_length+10])[0]
-            record_length = 10 + name_length + data_length
+            data_length = struct.unpack('!H', data[nlen+8:nlen+10])[0]
+            record_length = 10 + nlen + data_length
 
-        record_ttl = struct.unpack('!L', data[name_length+4:name_length+8])[0]
+        record_ttl = struct.unpack('!L', data[nlen+4:nlen+8])[0]
 
         return record_type, record_length, record_ttl
 
     # grabbing the records contained in the packet and appending them to their designated lists to be inspected by other methods.
     # count of records is being grabbed/used from the header information
     def ResourceRecord(self):
-        self.qname_length = len(self.query_name)
-        if self.resource_record.startswith(self.dns_pointer):
-            self.qname_length = 2
-
         # parsing standard and authority records
         for record_type in ['standard', 'authority']:
             record_count = getattr(self, f'{record_type}_count')
             records_list = getattr(self, f'{record_type}_records')
             for _ in range(record_count):
                 data = self.resource_record[self.offset:]
-                record_type, record_length, record_ttl = self.GetRecordType(data, self.qname_length)
+                record_type, record_length, record_ttl = self.GetRecordType(data)
 
                 resource_record = data[:record_length]
                 records_list.append((record_type, record_ttl, resource_record))
