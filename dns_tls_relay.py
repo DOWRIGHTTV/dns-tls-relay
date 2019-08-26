@@ -172,7 +172,7 @@ class DNSCache:
             print(f'RE CACHED TOP DOMAINS. TOTAL: {len(self.top_domains)}')
             # logging top domains in cache for reference. if top domains are useless, will work on a way to ensure only important domains
             # are cached. worst case can make them configurable.
-            with open('top_domains_cached.txt', 'w') as top_domains:
+            with open('top_domains_cached.txt', 'a+') as top_domains:
                 top_domains.write(f'{self.top_domains}\n')
 
             time.sleep(5 * 60)
