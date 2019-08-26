@@ -181,9 +181,9 @@ class PacketManipulation:
             new_record_ttl = record_ttl
         self.new_ttl = new_record_ttl
 
-        record_front = record[:self.qname_length+4]
+        record_front = record[:self.name_length+4]
         new_record_ttl = struct.pack('!L', new_record_ttl)
-        record_back = record[self.qname_length+8:]
+        record_back = record[self.name_length+8:]
 
         # returning rewrittin resource record
         return record_front + new_record_ttl + record_back
