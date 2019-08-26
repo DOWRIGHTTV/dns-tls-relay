@@ -78,8 +78,6 @@ class PacketManipulation:
         self.authority_count = content_info[2]
         self.additional_count = content_info[3]
 
-        print(f'RECORD COUNT HEADER: {self.standard_count} | PACKET TYPE: {self.packet_type}')
-
     def QuestionRecord(self):
         dns_payload = self.data[12:]
 
