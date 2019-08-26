@@ -202,11 +202,11 @@ class TLSRelay:
     def ProcessQueue(self):
         while True:
             now = time.time()
-            with self.dns_queue_lock:
-                if (not self.dns_tls_queue):
+#            with self.dns_queue_lock:
+            if (not self.dns_tls_queue):
                 # waiting 1ms before checking queue again for idle perf
-                    time.sleep(.001)
-                    continue
+                time.sleep(.001)
+                continue
 
             for secure_server, server_info in self.DNSRelay.dns_servers.items():
                 retry = now - server_info.get('retry', now)
@@ -220,15 +220,15 @@ class TLSRelay:
     def QueryThreads(self, secure_socket):
         threading.Thread(target=self.ReceiveQueries, args=(secure_socket,)).start()
         time.sleep(.0001)
-        threading.Thread(target=self.SendQueries, args=(secure_socket,)).start()
+        self.SendQueries(secure_socket)
 
     def SendQueries(self, secure_socket):
         try:
-            with self.dns_queue_lock:
-                while self.dns_tls_queue:
-                    message = self.dns_tls_queue.popleft()
+#            with self.dns_queue_lock:
+            while self.dns_tls_queue:
+                message = self.dns_tls_queue.popleft()
 
-                    secure_socket.send(message)
+                secure_socket.send(message)
 
             secure_socket.shutdown(SHUT_WR)
 
