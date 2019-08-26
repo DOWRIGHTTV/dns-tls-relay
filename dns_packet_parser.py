@@ -78,6 +78,8 @@ class PacketManipulation:
         self.authority_count = content_info[2]
         self.additional_count = content_info[3]
 
+        print(f'RECORD COUNT HEADER: {self.standard_count} | PACKET TYPE: {self.packet_type}')
+
     def QuestionRecord(self):
         dns_payload = self.data[12:]
 
@@ -146,20 +148,21 @@ class PacketManipulation:
 
                     resource_record += record
 
+        # rewriting answer record count if a record count is over max due to limiting record total
+        if (self.a_record_count == MAX_A_RECORD_COUNT):
+            answer_count = struct.pack('!H', MAX_A_RECORD_COUNT)
+            self.dns_header = self.dns_header[:6] + answer_count + self.dns_header[8:]
+
         # setting add record count to 0 and assigning variable for data to cache prior to appending additional records
         self.data_to_cache = self.dns_header[:10] + b'\x00'*2 + self.question_record + resource_record
 
+        # additional records will remain intact until otherwise needed
         for record in (self.additional_records):
             resource_record += record
 
         # Replacing tcp dns id with original client dns id if converting back from tcp/tls.
         if (dns_id):
             self.dns_header = struct.pack('!H', dns_id) + self.dns_header[2:]
-
-        # rewriting answer record count if a record count is over max due to limiting record total
-        if (self.a_record_count > MAX_A_RECORD_COUNT):
-           answer_count = struct.pack('!H', MAX_A_RECORD_COUNT)
-           self.dns_header = self.dns_header[:6] + answer_count + self.dns_header[8:]
 
         self.send_data += self.dns_header + self.question_record + resource_record
 

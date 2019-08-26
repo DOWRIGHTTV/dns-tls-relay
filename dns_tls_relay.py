@@ -15,7 +15,7 @@ from socket import socket, timeout,error, AF_INET, SOCK_DGRAM, SOCK_STREAM, SHUT
 
 from dns_packet_parser import PacketManipulation
 
-LISTENING_ADDRESS = '192.168.2.250'
+LISTENING_ADDRESS = '10.0.2.15'
 
 # must support DNS over TLS (not https/443, tcp/853)
 PUBLIC_SERVER_1 = '1.1.1.1'
@@ -53,7 +53,7 @@ class DNSRelay:
 
     def Main(self):
         self.sock = socket(AF_INET, SOCK_DGRAM)
-        self.sock.bind((LISTENING_ADDRESS, DNS_PORT))
+        self.sock.bind(('127.0.0.1', DNS_PORT))
 
         print(f'[+] Listening -> {LISTENING_ADDRESS}:{DNS_PORT}')
         while True:
