@@ -112,6 +112,12 @@ class PacketManipulation:
             print(f'UNSEEN RECORD TYPE :/ | {record_type}')
             print(data)
             print('='*30)
+            with open('dns_tls_relay.error', 'a+') as errors:
+                errors.write('+'*30)
+                errors.write(f'UNSEEN RECORD TYPE :/ | {record_type}')
+                errors.write(data)
+                errors.write('='*30)
+
 
         record_ttl = struct.unpack('!L', data[nlen+4:nlen+8])[0]
 
