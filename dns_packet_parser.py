@@ -106,6 +106,13 @@ class PacketManipulation:
             data_length = struct.unpack('!H', data[nlen+8:nlen+10])[0]
             record_length = 10 + nlen + data_length
 
+        # to catch errors with record type parsing and allow for troubleshooting
+        else:
+            print('+'*30)
+            print(f'UNSEEN RECORD TYPE :/ | {record_type}')
+            print(data)
+            print('='*30)
+
         record_ttl = struct.unpack('!L', data[nlen+4:nlen+8])[0]
 
         return record_type, record_length, record_ttl
