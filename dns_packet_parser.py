@@ -97,7 +97,7 @@ class PacketManipulation:
         #first two bits marking a pointer
         one = data[0] & 1 << 7
         two = data[0] & 1 << 6
-        if (one and two and not isinstance(data[0], int)):
+        if (one and two):
             self.name_length = 2
         nlen = self.name_length
 
@@ -114,12 +114,14 @@ class PacketManipulation:
             print('+'*30)
             print(f'UNSEEN RECORD TYPE :/ | {record_type}')
             print(f'NAME LENGTH: {nlen}')
+            print(f'ONE: {one} | TWO: {two}')
             print(data)
             print('='*30)
             with open('dns_tls_relay.error', 'a+') as errors:
                 errors.write('++++++++++++++++++++++++++\n')
                 errors.write(f'UNSEEN RECORD TYPE :/ | {record_type}\n')
                 errors.write(f'NAME LENGTH: {nlen}\n')
+                errors.write(f'ONE: {one} | TWO: {two}\n')
                 errors.write(f'{data}\n')
                 errors.write('==========================\n')
 
