@@ -111,9 +111,11 @@ class PacketManipulation:
 
         # to catch errors with record type parsing and allow for troubleshooting
         else:
+            record_length = -1
             print('+'*30)
             print(f'UNSEEN RECORD TYPE :/ | {record_type}')
             print(f'NAME LENGTH: {nlen}')
+            print(self.data)
             print(f'ONE: {one} | TWO: {two}')
             print(data)
             print('='*30)
@@ -121,6 +123,7 @@ class PacketManipulation:
                 errors.write('++++++++++++++++++++++++++\n')
                 errors.write(f'UNSEEN RECORD TYPE :/ | {record_type}\n')
                 errors.write(f'NAME LENGTH: {nlen}\n')
+                errors.write(f'{self.data}\n')
                 errors.write(f'ONE: {one} | TWO: {two}\n')
                 errors.write(f'{data}\n')
                 errors.write('==========================\n')
