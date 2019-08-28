@@ -97,10 +97,8 @@ class PacketManipulation:
         #first two bits marking a pointer
         one = data[0] & 1 << 7
         two = data[0] & 1 << 6
-        if (one and two):
+        if (one and two and not isinstance(data[0], int)):
             self.name_length = 2
-        # if (data.startswith(b'\xc0')):
-        #     self.name_length = 2
         nlen = self.name_length
 
         record_type = struct.unpack('!H', data[nlen:nlen+2])[0]
