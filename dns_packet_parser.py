@@ -169,7 +169,10 @@ class PacketManipulation:
             all_records = getattr(self, f'{record_type}_records')
             for record_info in all_records:
                 record_type = record_info[0]
-                if (record_type != A_RECORD or self.a_record_count < MAX_A_RECORD_COUNT):
+                if (record_type == CNAME):
+                    resource_record += record_info[2]
+                # this was breaking CNAME potentially on the rewrite. rewriting CNAME should be looked at further if that is the case.
+                elif (record_type != A_RECORD or self.a_record_count < MAX_A_RECORD_COUNT):
                     record = self.TTLRewrite(record_info, response_ttl)
 
                     resource_record += record
