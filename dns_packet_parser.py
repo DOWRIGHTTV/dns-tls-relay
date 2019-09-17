@@ -101,7 +101,7 @@ class PacketManipulation:
         if (one and two):
             nlen = 2
         else:
-            nlen = len(data.split(b'\x00', 1)[0]) + 1 # name, pad
+            nlen = len(data.split(b'\x00', 1)[0])# + 1 # name, pad
 
         record_type = struct.unpack('!H', data[nlen:nlen+2])[0]
         if (record_type == A_RECORD):
@@ -146,10 +146,12 @@ class PacketManipulation:
                 record_type, record_length, record_ttl = self.GetRecordType(data)
 
                 resource_record = data[:record_length]
-                print(resource_record)
+                print((record_type, record_ttl, resource_record))
                 records_list.append((record_type, record_ttl, resource_record))
 
                 self.offset += record_length
+
+        print(self.data)
 
         # parsing additional records
         for _ in range(self.additional_count):
