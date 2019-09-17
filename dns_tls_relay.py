@@ -91,7 +91,7 @@ class DNSRelay:
         cached_packet = self.DNSCache.Search(packet.request, packet.dns_id)
         if (cached_packet):
             self.SendtoClient(cached_packet, client_address, from_cache=True)
-            print(f'CACHED RESPONSE | NAME: {packet.request} TTL: {cached_packet.new_ttl}')
+            print(f'CACHED RESPONSE | NAME: {packet.request} TTL: {cached_packet.cache_ttl}')
         else:
             self.TLSRelay.AddtoQueue(packet, client_address)
 

@@ -197,7 +197,6 @@ class PacketManipulation:
         if (record_type == A_RECORD):
             self.a_record_count += 1
 
-        self.cache_ttl = record_ttl
         if (record_ttl < MINIMUM_TTL):
             new_record_ttl = MINIMUM_TTL
         # rewriting ttl to the remaining amount that was calculated from cached packet or to the maximum defined TTL
@@ -206,7 +205,7 @@ class PacketManipulation:
         # anything in between the min and max TTL will be retained
         else:
             new_record_ttl = record_ttl
-        self.new_ttl = new_record_ttl
+        self.cache_ttl = new_record_ttl
 
         record_front = record[:nlen+4]
         new_record_ttl = struct.pack('!L', new_record_ttl)
