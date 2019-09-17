@@ -39,6 +39,7 @@ class PacketManipulation:
         self.send_data = b''
 
         self.offset = 0
+        self.cname_count = 0
         self.a_record_count = 0
         self.standard_records = []
         self.authority_records =[]
@@ -81,14 +82,14 @@ class PacketManipulation:
     def QuestionRecord(self):
         dns_payload = self.data[12:]
 
-        query_info = dns_payload.split(b'\x00',1)
+        query_info = dns_payload.split(b'\x00', 1)
         record_type_info = struct.unpack('!2H', query_info[1][0:4])
         self.query_name = query_info[0]
         self.qtype = record_type_info[0]
         self.qclass = record_type_info[1]
 
         self.name_length = len(self.query_name)
-        question_length = self.name_length + 5
+        question_length = self.name_length + 1 + 4 # name, pad, data
 
         self.question_record = dns_payload[:question_length]
         self.resource_record = dns_payload[question_length:]
@@ -98,16 +99,17 @@ class PacketManipulation:
         one = data[0] & 1 << 7
         two = data[0] & 1 << 6
         if (one and two):
-            self.name_length = 2
-        nlen = self.name_length
+            nlen = 2
+        else:
+            nlen = len(data.split(b'\x00', 1)[0]) + 1 # name, pad
 
         record_type = struct.unpack('!H', data[nlen:nlen+2])[0]
         if (record_type == A_RECORD):
-            record_length = 14 + nlen
+            record_length = 10 + 4 + nlen
 
         elif (record_type in {CNAME, SOA}):
             data_length = struct.unpack('!H', data[nlen+8:nlen+10])[0]
-            record_length = 10 + nlen + data_length
+            record_length = 10 + data_length + nlen
 
         # to catch errors with record type parsing and allow for troubleshooting
         else:
@@ -144,6 +146,7 @@ class PacketManipulation:
                 record_type, record_length, record_ttl = self.GetRecordType(data)
 
                 resource_record = data[:record_length]
+                print(resource_record)
                 records_list.append((record_type, record_ttl, resource_record))
 
                 self.offset += record_length
