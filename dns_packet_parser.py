@@ -101,7 +101,7 @@ class PacketManipulation:
         if (one and two):
             nlen = 2
         else:
-            nlen = len(data.split(b'\x00', 1)[0])# + 1 # name, pad
+            nlen = len(data.split(b'\x00', 1)[0]) + 1 # name, pad
 
         record_type = struct.unpack('!H', data[nlen:nlen+2])[0]
         if (record_type == A_RECORD):
@@ -110,6 +110,7 @@ class PacketManipulation:
         elif (record_type in {CNAME, SOA}):
             data_length = struct.unpack('!H', data[nlen+8:nlen+10])[0]
             record_length = 10 + data_length + nlen
+            print(f'RECORD LENGTH: {record_length}')
 
         # to catch errors with record type parsing and allow for troubleshooting
         else:
@@ -146,12 +147,12 @@ class PacketManipulation:
                 record_type, record_length, record_ttl = self.GetRecordType(data)
 
                 resource_record = data[:record_length]
-                print((record_type, record_ttl, resource_record))
+#                print((record_type, record_ttl, resource_record))
                 records_list.append((record_type, record_ttl, resource_record))
 
                 self.offset += record_length
 
-        print(self.data)
+#        print(self.data)
 
         # parsing additional records
         for _ in range(self.additional_count):
