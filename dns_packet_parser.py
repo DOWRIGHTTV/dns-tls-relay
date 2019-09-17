@@ -88,8 +88,8 @@ class PacketManipulation:
         self.qtype = record_type_info[0]
         self.qclass = record_type_info[1]
 
-        self.name_length = len(self.query_name)
-        question_length = self.name_length + 1 + 4 # name, pad, data
+        name_length = len(self.query_name)
+        question_length = name_length + 1 + 4 # name, pad, data
 
         self.question_record = dns_payload[:question_length]
         self.resource_record = dns_payload[question_length:]
@@ -110,7 +110,6 @@ class PacketManipulation:
         elif (record_type in {CNAME, SOA}):
             data_length = struct.unpack('!H', data[nlen+8:nlen+10])[0]
             record_length = 10 + data_length + nlen
-            print(f'RECORD LENGTH: {record_length}')
 
         # to catch errors with record type parsing and allow for troubleshooting
         else:
@@ -133,7 +132,7 @@ class PacketManipulation:
 
         record_ttl = struct.unpack('!L', data[nlen+4:nlen+8])[0]
 
-        return record_type, record_length, record_ttl
+        return record_type, record_length, record_ttl, nlen
 
     # grabbing the records contained in the packet and appending them to their designated lists to be inspected by other methods.
     # count of records is being grabbed/used from the header information
@@ -144,11 +143,11 @@ class PacketManipulation:
             records_list = getattr(self, f'{record_type}_records')
             for _ in range(record_count):
                 data = self.resource_record[self.offset:]
-                record_type, record_length, record_ttl = self.GetRecordType(data)
+                record_type, record_length, record_ttl, nlen = self.GetRecordType(data)
 
                 resource_record = data[:record_length]
 #                print((record_type, record_ttl, resource_record))
-                records_list.append((record_type, record_ttl, resource_record))
+                records_list.append((record_type, record_ttl, nlen, resource_record))
 
                 self.offset += record_length
 
@@ -169,10 +168,7 @@ class PacketManipulation:
             all_records = getattr(self, f'{record_type}_records')
             for record_info in all_records:
                 record_type = record_info[0]
-                if (record_type == CNAME):
-                    resource_record += record_info[2]
-                # this was breaking CNAME potentially on the rewrite. rewriting CNAME should be looked at further if that is the case.
-                elif (record_type != A_RECORD or self.a_record_count < MAX_A_RECORD_COUNT):
+                if (record_type != A_RECORD or self.a_record_count < MAX_A_RECORD_COUNT):
                     record = self.TTLRewrite(record_info, response_ttl)
 
                     resource_record += record
@@ -196,7 +192,7 @@ class PacketManipulation:
         self.send_data += self.dns_header + self.question_record + resource_record
 
     def TTLRewrite(self, record_info, response_ttl):
-        record_type, record_ttl, record = record_info
+        record_type, record_ttl, nlen, record = record_info
         # incrementing a record counter to limit amount of records in response/held in cache to configured ammount
         if (record_type == A_RECORD):
             self.a_record_count += 1
@@ -212,9 +208,9 @@ class PacketManipulation:
             new_record_ttl = record_ttl
         self.new_ttl = new_record_ttl
 
-        record_front = record[:self.name_length+4]
+        record_front = record[:nlen+4]
         new_record_ttl = struct.pack('!L', new_record_ttl)
-        record_back = record[self.name_length+8:]
+        record_back = record[nlen+8:]
 
         # returning rewrittin resource record
         return record_front + new_record_ttl + record_back
