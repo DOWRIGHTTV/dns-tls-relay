@@ -3,6 +3,8 @@
 import struct
 import traceback
 
+from log_methods import record_parse_error
+
 TCP = 6
 UDP = 17
 
@@ -95,13 +97,16 @@ class PacketManipulation:
         self.resource_record = dns_payload[question_length:]
 
     def GetRecordType(self, data):
-        #first two bits marking a pointer
-        one = data[0] & 1 << 7
-        two = data[0] & 1 << 6
-        if (one and two):
-            nlen = 2
+        #checking if record starts with a pointer/is a pointer
+        if (data.startswith(b'\xc0')):
+            record_name = data[:2]
         else:
-            nlen = len(data.split(b'\x00', 1)[0]) + 1 # name, pad
+            record_name = data.split(b'\x00', 1)[0]
+
+        nlen = len(record_name)
+        #if record contains a pointer, no action taken, if not 1 will be added to the length to adjust for the pad at the end of the name
+        if (b'\xc0' not in record_name):
+            nlen += 1
 
         record_type = struct.unpack('!H', data[nlen:nlen+2])[0]
         if (record_type == A_RECORD):
@@ -111,24 +116,11 @@ class PacketManipulation:
             data_length = struct.unpack('!H', data[nlen+8:nlen+10])[0]
             record_length = 10 + data_length + nlen
 
-        # to catch errors with record type parsing and allow for troubleshooting
+        # to catch errors with record type parsing and allow for troubleshooting (TEMPORARY)
         else:
+            log_info = {'rtype': record_type, 'nlen': nlen, 'data': data}
+            record_parse_error(log_info)
             record_length = -1
-            print('+'*30)
-            print(f'UNSEEN RECORD TYPE :/ | {record_type}')
-            print(f'NAME LENGTH: {nlen}')
-            print(self.data)
-            print(f'ONE: {one} | TWO: {two}')
-            print(data)
-            print('='*30)
-            with open('dns_tls_relay.error', 'a+') as errors:
-                errors.write('++++++++++++++++++++++++++\n')
-                errors.write(f'UNSEEN RECORD TYPE :/ | {record_type}\n')
-                errors.write(f'NAME LENGTH: {nlen}\n')
-                errors.write(f'{self.data}\n')
-                errors.write(f'ONE: {one} | TWO: {two}\n')
-                errors.write(f'{data}\n')
-                errors.write('==========================\n')
 
         record_ttl = struct.unpack('!L', data[nlen+4:nlen+8])[0]
 
@@ -146,7 +138,7 @@ class PacketManipulation:
                 record_type, record_length, record_ttl, nlen = self.GetRecordType(data)
 
                 resource_record = data[:record_length]
-#                print((record_type, record_ttl, resource_record))
+                print((record_type, record_ttl, resource_record))
                 records_list.append((record_type, record_ttl, nlen, resource_record))
 
                 self.offset += record_length
