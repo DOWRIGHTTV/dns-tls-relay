@@ -138,12 +138,10 @@ class PacketManipulation:
                 record_type, record_length, record_ttl, nlen = self.GetRecordType(data)
 
                 resource_record = data[:record_length]
-                print((record_type, record_ttl, resource_record))
+#                print((record_type, record_ttl, resource_record))
                 records_list.append((record_type, record_ttl, nlen, resource_record))
 
                 self.offset += record_length
-
-#        print(self.data)
 
         # parsing additional records
         for _ in range(self.additional_count):

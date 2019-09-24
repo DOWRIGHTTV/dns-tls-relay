@@ -28,7 +28,6 @@ A_RECORD = 1
 DNS_PORT = 53
 DNS_TLS_PORT = 853
 DEFAULT_TTL = 3600
-FALLBACK_TTL = 150
 
 TOP_DOMAIN_COUNT = 20
 
@@ -98,7 +97,7 @@ class DNSRelay:
 class DNSCache:
     def __init__(self, DNSRelay):
         self.DNSRelay = DNSRelay
-        self.dns_query_cache = {}
+        self.dns_cache = {}
 
         self.domain_counter = Counter()
         self.top_domains = {}
@@ -108,11 +107,18 @@ class DNSCache:
     # queries will be added to cache if it is not already cached or has expired or if the dns response is the
     # result from an internal dns request for top domains
     def Add(self, packet, client_address):
-        expire = int(time.time()) + packet.cache_ttl
+        cache_expired = False
+        now = time.time()
+        expire = int(now) + packet.cache_ttl
         client_ip, client_port = client_address
-        if ((packet.request not in self.dns_query_cache and packet.data_to_cache)
+        already_cached = self.dns_cache.get(packet.request, None)
+        # checking to see if cached packet is expired to ensure it is recached with updated information
+        if (already_cached and already_cached['expired'] <= now):
+            cache_expired = True
+        # will cache packet if not already cached or if it is from the top domains list
+        if ((not already_cached and packet.data_to_cache) or cache_expired
                 or (not client_ip and not client_port)):
-            self.dns_query_cache.update({packet.request: {
+            self.dns_cache.update({packet.request: {
                                             'packet': packet.data_to_cache,
                                             'expire': expire}})
 
@@ -120,7 +126,7 @@ class DNSCache:
 
     def Search(self, request, client_dns_id):
         now = int(time.time())
-        cached_query = self.dns_query_cache.get(request, None)
+        cached_query = self.dns_cache.get(request, None)
         if (cached_query and cached_query['expire'] > now):
             cached_packet = PacketManipulation(cached_query['packet'], protocol=UDP)
             cached_packet.Parse()
@@ -128,8 +134,6 @@ class DNSCache:
             calculated_ttl = cached_query['expire'] - now
             if (calculated_ttl > DEFAULT_TTL):
                 calculated_ttl = DEFAULT_TTL
-            elif (calculated_ttl < 0):
-                calculated_ttl = FALLBACK_TTL
 
             cached_packet.Rewrite(dns_id=client_dns_id, response_ttl=calculated_ttl)
 
@@ -145,10 +149,10 @@ class DNSCache:
             now = time.time()
             self.top_domains = {domain for count, domain in enumerate(self.domain_counter) \
                 if count < TOP_DOMAIN_COUNT}
-            query_cache = deepcopy(self.dns_query_cache)
+            query_cache = deepcopy(self.dns_cache)
             for domain, info in query_cache.items():
                 if (info['expire'] > now and domain not in self.top_domains):
-                    self.dns_query_cache.pop(domain, None)
+                    self.dns_cache.pop(domain, None)
 
             print('CLEARED EXPIRED CACHE.')
 
@@ -161,7 +165,7 @@ class DNSCache:
         client_address = (None, None)
         while True:
             for domain in self.top_domains:
-                cached_packet_info = self.dns_query_cache.get(domain, None)
+                cached_packet_info = self.dns_cache.get(domain, None)
                 if (cached_packet_info):
                     # reverting the dns response packet to a standard query
                     packet = PacketManipulation(cached_packet_info['packet'], protocol=UDP)
@@ -219,7 +223,7 @@ class TLSRelay:
 
     def QueryThreads(self, secure_socket):
         threading.Thread(target=self.ReceiveQueries, args=(secure_socket,)).start()
-        time.sleep(.0001)
+        time.sleep(.001)
         self.SendQueries(secure_socket)
 
     def SendQueries(self, secure_socket):
