@@ -113,7 +113,7 @@ class DNSCache:
         client_ip, client_port = client_address
         already_cached = self.dns_cache.get(packet.request, None)
         # checking to see if cached packet is expired to ensure it is recached with updated information
-        if (already_cached and already_cached['expired'] <= now):
+        if (already_cached and already_cached['expire'] <= now):
             cache_expired = True
         # will cache packet if not already cached or if it is from the top domains list
         if ((not already_cached or cache_expired) or (not client_ip and not client_port)
