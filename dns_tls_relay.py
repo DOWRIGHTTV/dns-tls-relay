@@ -221,7 +221,6 @@ class TLSRelay:
                 continue
 
             if (self.reusable_socket and self.socket_available):
-                print(self.reusable_socket)
                 self.SendQueries(self.reusable_socket)
                 continue
 
