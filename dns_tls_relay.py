@@ -231,6 +231,7 @@ class TLSRelay:
                     secure_socket = self.Connect(secure_server)
                 if (secure_socket):
                     threading.Thread(target=self.ReceiveQueries, args=(secure_socket,)).start()
+                    #delay prevent low level issues with openssl lib
                     time.sleep(.001)
                     self.SendQueries(secure_socket)
 
