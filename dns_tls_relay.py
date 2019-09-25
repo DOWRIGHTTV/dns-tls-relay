@@ -16,10 +16,10 @@ from socket import socket, timeout,error, AF_INET, SOCK_DGRAM, SOCK_STREAM, SHUT
 from dns_packet_parser import PacketManipulation
 
 # address which the relay will receive dns requests
-LISTENING_ADDRESS = '192.168.2.250'
+LISTENING_ADDRESS = '127.0.0.1'
 
 # adress which the relay will use to talk to a public resolver
-CLIENT_ADDRESS = '192.168.2.250'
+CLIENT_ADDRESS = '10.0.2.15'
 
 # must support DNS over TLS (not https/443, tcp/853)
 PUBLIC_SERVER_1 = '1.1.1.1'
@@ -196,6 +196,9 @@ class TLSRelay:
         self.unique_id_lock = threading.Lock()
         self.dns_queue_lock = threading.Lock()
 
+        self.reusable_socket = None
+        self.socket_closed = False
+
     def AddtoQueue(self, packet, client_address):
         tcp_dns_id = self.GenerateIDandStore()
         dns_query = packet.UDPtoTLS(tcp_dns_id)
@@ -209,6 +212,7 @@ class TLSRelay:
     # in queue over the connection.
     def ProcessQueue(self):
         while True:
+            secure_socket = None
             now = time.time()
 #            with self.dns_queue_lock:
             if (not self.dns_tls_queue):
@@ -216,19 +220,21 @@ class TLSRelay:
                 time.sleep(.001)
                 continue
 
+            if (self.reusable_socket and self.socket_available):
+                print(self.reusable_socket)
+                self.SendQueries(self.reusable_socket)
+                continue
+
             for secure_server, server_info in self.DNSRelay.dns_servers.items():
                 retry = now - server_info.get('retry', now)
                 if (server_info['tls'] or retry >= self.DNSRelay.tls_retry):
                     secure_socket = self.Connect(secure_server)
                 if (secure_socket):
-                    self.QueryThreads(secure_socket)
+                    threading.Thread(target=self.ReceiveQueries, args=(secure_socket,)).start()
+                    time.sleep(.001)
+                    self.SendQueries(secure_socket)
 
                     break
-
-    def QueryThreads(self, secure_socket):
-        threading.Thread(target=self.ReceiveQueries, args=(secure_socket,)).start()
-        time.sleep(.001)
-        self.SendQueries(secure_socket)
 
     def SendQueries(self, secure_socket):
         try:
@@ -236,18 +242,21 @@ class TLSRelay:
             while self.dns_tls_queue:
                 message = self.dns_tls_queue.popleft()
 
-                secure_socket.send(message)
+                secure_socket.sendall(message)
 
-            secure_socket.shutdown(SHUT_WR)
+            self.reusable_socket = secure_socket
 
         except error as E:
             print(f'TLSQUEUE | SEND: {E}')
+            secure_socket.close()
+            self.reusable_socket = None
 
     def ReceiveQueries(self, secure_socket):
         while True:
             try:
                 data_from_server = secure_socket.recv(4096)
                 if (not data_from_server):
+                    self.socket_available = False
                     break
 
                 self.ParseServerResponse(data_from_server)
@@ -311,6 +320,7 @@ class TLSRelay:
         try:
             sock = socket(AF_INET, SOCK_STREAM)
             sock.bind((CLIENT_ADDRESS, 0))
+            sock.settimeout(10)
 
             context = ssl.create_default_context()
             context = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
@@ -327,6 +337,7 @@ class TLSRelay:
             secure_socket = None
 
         if (secure_socket):
+            self.socket_available = True
             self.DNSRelay.dns_servers[secure_server].update({'tls': True})
         else:
             self.DNSRelay.dns_servers[secure_server].update({'tls': False, 'retry': now})
