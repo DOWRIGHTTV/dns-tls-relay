@@ -16,10 +16,10 @@ from socket import socket, timeout,error, AF_INET, SOCK_DGRAM, SOCK_STREAM, SHUT
 from dns_packet_parser import PacketManipulation
 
 # address which the relay will receive dns requests
-LISTENING_ADDRESS = '127.0.0.1'
+LISTENING_ADDRESS = '192.168.2.250'
 
 # adress which the relay will use to talk to a public resolver
-CLIENT_ADDRESS = '10.0.2.15'
+CLIENT_ADDRESS = '192.168.2.250'
 
 # must support DNS over TLS (not https/443, tcp/853)
 PUBLIC_SERVER_1 = '1.1.1.1'

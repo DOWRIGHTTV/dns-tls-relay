@@ -11,3 +11,4 @@ set()
 {'news.com', 'facebook.com', 'reddit.com', 'worldofwarcraft.com'}
 set()
 set()
+{'bob.com', 'worldofwarcraft.com', 'ok.com', 'instagram.com', 'api.google.com', 'facebook.com', 'mail.google.com'}
