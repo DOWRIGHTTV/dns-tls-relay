@@ -17,8 +17,8 @@ DEFAULT_TTL = 3600
 MINIMUM_TTL = 300
 MAX_A_RECORD_COUNT = 3
 
-QUERY = 0
-RESPONSE = 128
+DNS_QUERY = 0
+DNS_RESPONSE = 128
 
 
 class PacketManipulation:
@@ -47,24 +47,24 @@ class PacketManipulation:
         self.authority_records =[]
         self.additional_records = []
 
-    def Parse(self):
+    def parse(self):
         try:
-            self.Header()
-            if (self.packet_type in {QUERY, RESPONSE}):
-                self.QuestionRecord()
-                self.QName()
-                if (self.packet_type == RESPONSE):
-                    self.ResourceRecord()
+            self.header()
+            if (self.packet_type in {DNS_QUERY, DNS_RESPONSE}):
+                self.question_record_handler()
+                self.get_qname()
+                if (self.packet_type == DNS_RESPONSE):
+                    self.resource_record_handler()
 
         except Exception:
             traceback.print_exc()
 
-    def DNSID(self):
+    def get_dns_id(self):
         dns_id = struct.unpack('!H', self.data[:2])[0]
 
         return dns_id
 
-    def Header(self):
+    def header(self):
         self.dns_header = self.data[:12]
 
         self.dns_id = struct.unpack('!H', self.data[:2])[0]
@@ -81,7 +81,7 @@ class PacketManipulation:
         self.authority_count = content_info[2]
         self.additional_count = content_info[3]
 
-    def QuestionRecord(self):
+    def question_record_handler(self):
         dns_payload = self.data[12:]
 
         query_info = dns_payload.split(b'\x00', 1)
@@ -96,7 +96,7 @@ class PacketManipulation:
         self.question_record = dns_payload[:question_length]
         self.resource_record = dns_payload[question_length:]
 
-    def GetRecordType(self, data):
+    def get_record_type(self, data):
         #checking if record starts with a pointer/is a pointer
         if (data.startswith(b'\xc0')):
             record_name = data[:2]
@@ -128,14 +128,14 @@ class PacketManipulation:
 
     # grabbing the records contained in the packet and appending them to their designated lists to be inspected by other methods.
     # count of records is being grabbed/used from the header information
-    def ResourceRecord(self):
+    def resource_record_handler(self):
         # parsing standard and authority records
         for record_type in ['standard', 'authority']:
             record_count = getattr(self, f'{record_type}_count')
             records_list = getattr(self, f'{record_type}_records')
             for _ in range(record_count):
                 data = self.resource_record[self.offset:]
-                record_type, record_length, record_ttl, nlen = self.GetRecordType(data)
+                record_type, record_length, record_ttl, nlen = self.get_record_type(data)
 
                 resource_record = data[:record_length]
 #                print((record_type, record_ttl, resource_record))
@@ -152,14 +152,14 @@ class PacketManipulation:
 
             self.additional_records.append(data)
 
-    def Rewrite(self, dns_id=None, response_ttl=DEFAULT_TTL):
+    def rewrite(self, dns_id=None, response_ttl=DEFAULT_TTL):
         resource_record = b''
         for record_type in ['standard', 'authority']:
             all_records = getattr(self, f'{record_type}_records')
             for record_info in all_records:
                 record_type = record_info[0]
                 if (record_type != A_RECORD or self.a_record_count < MAX_A_RECORD_COUNT):
-                    record = self.TTLRewrite(record_info, response_ttl)
+                    record = self.ttl_rewrite(record_info, response_ttl)
 
                     resource_record += record
 
@@ -181,7 +181,7 @@ class PacketManipulation:
 
         self.send_data += self.dns_header + self.question_record + resource_record
 
-    def TTLRewrite(self, record_info, response_ttl):
+    def ttl_rewrite(self, record_info, response_ttl):
         record_type, record_ttl, nlen, record = record_info
         # incrementing a record counter to limit amount of records in response/held in cache to configured ammount
         if (record_type == A_RECORD):
@@ -204,7 +204,7 @@ class PacketManipulation:
         # returning rewrittin resource record
         return record_front + new_record_ttl + record_back
 
-    def QName(self):
+    def get_qname(self):
         b = len(self.query_name)
         qname = struct.unpack(f'!{b}B', self.query_name)
 
@@ -226,7 +226,7 @@ class PacketManipulation:
             self.request2 = f'{req[-2]}.{req[-1]}' # micro.com or co.uk
             self.request_tld = f'.{req[-1]}' # .com
 
-    def RevertResponse(self):
+    def revert_response(self):
         dns_payload = self.data[12:]
 
         # creating empty dns header, with standard query flag and recursion flag. will be rewritten with proper dns id
@@ -238,7 +238,7 @@ class PacketManipulation:
 
         self.data = dns_header + query_name + b'\x00' + dns_query[1][0:4]
 
-    def UDPtoTLS(self, dns_id):
+    def udp_to_tls(self, dns_id):
         payload_length = struct.pack('!H', len(self.data))
         tcp_dns_id = struct.pack('!H', dns_id)
 
