@@ -11,9 +11,11 @@ import ssl
 
 from copy import deepcopy
 from collections import deque, Counter
-from socket import socket, timeout,error, AF_INET, SOCK_DGRAM, SOCK_STREAM, SHUT_WR
+from socket import socket, timeout, error
+from socket import AF_INET, SOCK_DGRAM, SOCK_STREAM, SOL_SOCKET, SO_REUSEADDR
 
-from dns_packet_parser import PacketManipulation
+import basic_tools as tools
+from dns_packet_parser import RequestHandler, PacketManipulation
 
 # address which the relay will receive dns requests
 LISTENING_ADDRESS = '127.0.0.1'
@@ -39,31 +41,32 @@ TOP_DOMAIN_COUNT = 20
 class DNSRelay:
     def __init__(self):
         self.dns_servers = {}
-        self.dns_servers[PUBLIC_SERVER_1] = {'reach': True, 'tls': True}
-        self.dns_servers[PUBLIC_SERVER_2] = {'reach': True, 'tls': True}
+        self.dns_servers[PUBLIC_SERVER_1] = {'tls': True}
+        self.dns_servers[PUBLIC_SERVER_2] = {'tls': True}
 
-        self.tls_retry = 60
-
+        self.request_mapper = {}
+        self.unique_id_lock = threading.Lock()
         self.cache_lock = threading.Lock()
 
     def Start(self):
         self.DNSCache = DNSCache(self)
         self.TLSRelay = TLSRelay(self)
 
+        threading.Thread(target=self.TLSRelay.tls_reachability).start()
         threading.Thread(target=self.DNSCache.auto_clear_cache).start()
         threading.Thread(target=self.DNSCache.auto_top_domains).start()
         threading.Thread(target=self.TLSRelay.process_queue).start()
-        self.main()
+        self._ready_interface_service()
 
-    def main(self):
+    def _main(self):
         self.sock = socket(AF_INET, SOCK_DGRAM)
         self.sock.bind((LISTENING_ADDRESS, DNS_PORT))
 
-        print(f'[+] Listening -> {LISTENING_ADDRESS}:{DNS_PORT}')
+        tools.p(f'[+] Listening -> {LISTENING_ADDRESS}:{DNS_PORT}')
         while True:
             try:
                 data_from_client, client_address = self.sock.recvfrom(1024)
- #               print(f'Receved data from client: {client_address[0]}:{client_address[1]}.')
+ #               tools.p(f'Receved data from client: {client_address[0]}:{client_address[1]}.')
                 if (not data_from_client):
                     break
 
@@ -71,33 +74,70 @@ class DNSRelay:
             except error:
                 break
 
-        self.main()
+        self._ready_interface_service()
 
     def parse_queries(self, data_from_client, client_address):
         try:
-            packet = PacketManipulation(data_from_client, protocol=UDP)
-            packet.parse()
+            client_query = RequestHandler(data_from_client, client_address)
+            client_query.parse()
 
             ## Matching IPV4 DNS queries only. All other will be dropped.
-            if (packet.dns_query and packet.qtype == A_RECORD):
-                threading.Thread(target=self.process_query, args=(packet, client_address)).start()
+            if (not client_query.qr and client_query.qtype == A_RECORD):
+                threading.Thread(target=self._process_query, args=(client_query,)).start()
 
         except Exception as E:
-            print(f'MAIN: {E}')
+            tools.p(f'MAIN: {E}')
 
-    def send_to_client(self, packet, client_address, from_cache=False):
+    def send_to_client(self, server_response, client_address):
         ## Relaying packet from server back to host
-        self.sock.sendto(packet.send_data, client_address)
-#        print(f'Request Relayed to {client_address[0]}: {client_address[1]}')
+        self.sock.sendto(server_response.send_data, client_address)
+        tools.p(f'Request: {server_response.request} RELAYED TO {client_address[0]}: {client_address[1]}')
+
+    def _process_query(self, client_query):
+        self.DNSCache.increment_counter(client_query.request)
+        cached_packet = self.DNSCache.search(client_query)
+        if (cached_packet):
+            self.send_to_client(client_query, client_query.address)
+            tools.p(f'CACHED RESPONSE | NAME: {client_query.request} TTL: {client_query.calculated_ttl}')
+        else:
+            self.external_query(client_query)
 
     # will check to see if query is cached/ has been requested before. if not will add to queue for standard query
-    def process_query(self, packet, client_address):
-        cached_packet = self.DNSCache.search(packet.request, packet.dns_id)
-        if (cached_packet):
-            self.send_to_client(cached_packet, client_address, from_cache=True)
-            print(f'CACHED RESPONSE | NAME: {packet.request} TTL: {cached_packet.cache_ttl}')
-        else:
-            self.TLSRelay.add_to_queue(packet, client_address)
+    def external_query(self, client_query):
+        new_dns_id = self._generate_id_and_store()
+        self.request_mapper[new_dns_id] = client_query
+        client_query.generate_dns_query(new_dns_id)
+
+        self.TLSRelay.add_to_queue(client_query)
+
+    # Generate a unique DNS ID to be used by TLS connections only. Applies a lock on the function to ensure this
+    # id is thread safe and uniqueness is guranteed. IDs are stored in a dictionary for reference.
+    def _generate_id_and_store(self):
+        with self.unique_id_lock:
+            while True:
+                dns_id = random.randint(1, 32000)
+                if (dns_id not in self.request_mapper):
+                    self.request_mapper.update({dns_id: 1})
+
+                    return dns_id
+
+    def _ready_interface_service(self):
+        while True:
+            error = self._create_service_socket()
+            if (error):
+                time.sleep(1)
+                continue
+
+            self._main()
+
+    def _create_service_socket(self):
+        try:
+            self.sock = socket(AF_INET, SOCK_DGRAM)
+            self.sock.setsockopt(SOL_SOCKET, SO_REUSEADDR, 1)
+            self.sock.bind((LISTENING_ADDRESS, DNS_PORT))
+        except error:
+            # failed to create socket. interface may be down.
+            return True
 
 
 class DNSCache:
@@ -112,38 +152,35 @@ class DNSCache:
 
     # queries will be added to cache if it is not already cached or has expired or if the dns response is the
     # result from an internal dns request for top domains
-    def add(self, packet, client_address):
-        cache_expired = False
+    def add(self, server_response, client_address):
         now = time.time()
-        expire = int(now) + packet.cache_ttl
-        client_ip, client_port = client_address
-        already_cached = self.dns_cache.get(packet.request, None)
-        # checking to see if cached packet is expired to ensure it is recached with updated information
-        if (already_cached and already_cached['expire'] <= now):
-            cache_expired = True
-        # will cache packet if not already cached or if it is from the top domains list
-        if ((not already_cached or cache_expired) or (not client_ip and not client_port)
-                and packet.data_to_cache):
-            self.dns_cache.update({packet.request: {
-                                            'packet': packet.data_to_cache,
-                                            'expire': expire}})
+        expire = int(now) + server_response.cache_ttl
+        already_cached = self.dns_cache.get(server_response.request, None)
+        # will cache packet if not already cached or if it is from the top domains list(no client address)
+        if ((not already_cached or already_cached['expire'] <= now) or (not client_address)
+                and server_response.data_to_cache):
+            self.dns_cache.update({
+                server_response.request: {
+                    'records': server_response.data_to_cache,
+                    'expire': expire,
+                    'normal_cache': bool(client_address)
+                    }
+                })
 
-            print(f'CACHE ADD | NAME: {packet.request} TTL: {packet.cache_ttl}')
+            tools.p(f'CACHE ADD | NAME: {server_response.request} TTL: {server_response.cache_ttl}')
 
-    def search(self, request, client_dns_id):
+    def search(self, client_query):
         now = int(time.time())
-        cached_query = self.dns_cache.get(request, None)
+        cached_query = self.dns_cache.get(client_query.request, None)
         if (cached_query and cached_query['expire'] > now):
-            cached_packet = PacketManipulation(cached_query['packet'], protocol=UDP)
-            cached_packet.parse()
-
+            records = cached_query['records']
             calculated_ttl = cached_query['expire'] - now
             if (calculated_ttl > DEFAULT_TTL):
                 calculated_ttl = DEFAULT_TTL
 
-            cached_packet.rewrite(dns_id=client_dns_id, response_ttl=calculated_ttl)
+            client_query.generate_cached_response(calculated_ttl, records)
 
-            return cached_packet
+            return True
 
     def increment_counter(self, domain):
         with self.domain_counter_lock:
@@ -153,193 +190,151 @@ class DNSCache:
     def auto_clear_cache(self):
         while True:
             now = time.time()
-            self.top_domains = {domain for count, domain in enumerate(self.domain_counter) \
-                if count < TOP_DOMAIN_COUNT}
             query_cache = deepcopy(self.dns_cache)
             for domain, info in query_cache.items():
-                if (info['expire'] > now and domain not in self.top_domains):
+                if (info['expire'] < now and domain not in self.top_domains):
                     self.dns_cache.pop(domain, None)
 
-            print('CLEARED EXPIRED CACHE.')
+            # here for testing purposes || consider reporting the cache size to the front end
+#            tools.p('CLEARED EXPIRED CACHE.')
+            cache_size = sys.getsizeof(self.dns_cache)
+            num_records = len(self.dns_cache)
+            tools.p(f'CACHE SIZE: {cache_size} | NUMBER OF RECORDS: {num_records} | CACHE: {self.dns_cache}')
 
-            time.sleep(5 * 60)
+#            time.sleep(5*60)
+            time.sleep(10)
 
     # automated process to keep top 20 queried domains permanently in cache. it will use the current caches packet to generate
     # a new packet and add to the standard tls queue. the recieving end will know how to handle this by settings the client address
     # to none in the session tracker.
     def auto_top_domains(self):
-        client_address = (None, None)
         while True:
+            self.top_domains = {domain[0]:count for count, domain
+                in enumerate(self.domain_counter.most_common(TOP_DOMAIN_COUNT), 1)}
+
             for domain in self.top_domains:
-                cached_packet_info = self.dns_cache.get(domain, None)
-                if (cached_packet_info):
-                    # reverting the dns response packet to a standard query
-                    packet = PacketManipulation(cached_packet_info['packet'], protocol=UDP)
-                    packet.revert_response()
+                # creating empty class object, then assigning required fields. this will allow compatibility with standard server
+                # operations for locally generated requests/queries
+                new_query = RequestHandler(None, None)
+                new_query.set_required_fields(domain)
+                self.DNSRelay.external_query(new_query)
 
-                    self.DNSRelay.TLSRelay.AddtoQueue(packet, client_address)
-
-            print(f'RE CACHED TOP DOMAINS. TOTAL: {len(self.top_domains)}')
+            tools.p(f'RE CACHED TOP DOMAINS. TOTAL: {len(self.top_domains)}')
             # logging top domains in cache for reference. if top domains are useless, will work on a way to ensure only important domains
             # are cached. worst case can make them configurable.
-            with open('top_domains_cached.txt', 'a+') as top_domains:
+            top_domains = {'top_domains': self.top_domains}
+            with open('top_domains_cache.txt', 'a+') as top_domains:
                 top_domains.write(f'{self.top_domains}\n')
 
-            time.sleep(5 * 60)
+#            time.sleep(3*60)
+            time.sleep(15)
 
 
 class TLSRelay:
     def __init__(self, DNSRelay):
         self.DNSRelay = DNSRelay
 
-        self.dns_connection_tracker = {}
         self.dns_tls_queue = deque()
-
-        self.unique_id_lock = threading.Lock()
-        self.dns_queue_lock = threading.Lock()
 
         self.secure_socket = None
         self.socket_available = False
 
         self.tls_context = self._create_tls_context()
 
-    def add_to_queue(self, packet, client_address):
-        tcp_dns_id = self._generate_id_and_store()
-        dns_query = packet.udp_to_tls(tcp_dns_id)
+    def add_to_queue(self, client_query):
+        self.dns_tls_queue.append(client_query)
 
-        ## Adding client connection info to tracker to be used by response handler
-        self.dns_connection_tracker.update({tcp_dns_id: {'client_id': packet.dns_id, 'client_address': client_address}})
-
-        self.dns_tls_queue.append(dns_query)
-
-    ## Queue Handler will make a TLS connection to remote dns server/ start a response handler thread and send all requests
-    # in queue over the connection.
     def process_queue(self):
         while True:
-            now = time.time()
-#            with self.dns_queue_lock:
             if (not self.dns_tls_queue):
-                # waiting 1ms before checking queue again for idle perf
+            # waiting 1ms before checking queue again for idle perf
                 time.sleep(.001)
                 continue
 
-            # print(f'SOCKET: {self.secure_socket}')
-            # print(f'AVAILABLE: {self.socket_available}')
-            if (self.secure_socket and self.socket_available):
-                self._send_queries()
-                continue
+            client_query = self.dns_tls_queue.popleft()
+            # if socket is not available, we will attempt to connect to remote servers before sending request
+            if (not self.secure_socket):
+                self._logic_handler()
+            else:
+                tools.p('PIPELINING REQUEST.')
 
-            for secure_server, server_info in self.DNSRelay.dns_servers.items():
-                retry = now - server_info.get('retry', now)
-                if (server_info['tls'] or retry >= self.DNSRelay.tls_retry):
-                    self._tls_connect(secure_server)
+            if (self.secure_socket):
+                self._send_query(client_query)
 
-                if (self.secure_socket):
-                    threading.Thread(target=self._receive_queries).start()
-                    #delay prevent low level issues with openssl lib
-                    time.sleep(.001)
-                    self._send_queries()
-
+    # Iterating over dns server list and calling to create a connection to first available. this will only happen
+    # if a socket connection isnt already established.
+    def _logic_handler(self):
+        for secure_server, status in self.DNSRelay.dns_servers.items():
+            if (status['tls']):
+                error = self._tls_connect(secure_server)
+                if (not error):
                     break
+        else:
+            tools.p('NO SECURE SERVER AVAILABLE!')
 
-    def _send_queries(self):
+    def _send_query(self, client_query):
         try:
-#            with self.dns_queue_lock:
-            while self.dns_tls_queue:
-                message = self.dns_tls_queue.popleft()
-
-                self.secure_socket.sendall(message)
-
-        except error as E:
-            print(f'TLSQUEUE | SEND: {E}')
+            tools.p(f'SENDING SECURE DATA FOR REQUEST: {client_query.request}')
+            self.secure_socket.sendall(client_query.send_data)
+        except error:
             self.secure_socket.close()
             self.secure_socket = None
 
     def _receive_queries(self):
-        while True:
-            try:
+        try:
+            while True:
                 data_from_server = self.secure_socket.recv(4096)
                 if (not data_from_server):
-                    self.socket_available = False
+                    tools.p('PIPELINE CLOSED BY REMOTE SERVER.')
                     break
 
                 self._parse_server_response(data_from_server)
-            except (timeout, error):
-                break
-
-        self.secure_socket.close()
+        except (timeout, error) as e:
+            tools.p(e)
+        finally:
+            self.secure_socket.close()
+            self.secure_socket = None
 
     # Response Handler will match all recieved request responses from the server, match it to the host connection
     # and relay it back to the correct host/port. this will happen as they are recieved. the socket will be closed
     # once the recieved count matches the expected/sent count or from socket timeout
     def _parse_server_response(self, data_from_server):
-        try:
-            # Checking the DNS ID in packet, Adjusted to ensure uniqueness
-            packet = PacketManipulation(data_from_server, protocol=TCP)
-            dns_id = packet.get_dns_id()
-            # Checking client DNS ID and Address info to relay query back to host
-            dns_query_info = self.dns_connection_tracker.get(dns_id, None)
-            if (dns_query_info):
-                packet.parse()
-                print(f'Secure Request Received from Server. DNS ID: {packet.dns_id} | {packet.request}')
-
-                client_dns_id = dns_query_info.get('client_id')
-                client_address = dns_query_info.get('client_address')
+        # Checking the DNS ID in packet, Adjusted to ensure uniqueness
+        server_response = PacketManipulation(data_from_server)
+        dns_id = server_response.get_dns_id()
+#        tools.p(f'RECEIVED SOMETHING| ID: {dns_id} | MAPPER: {self.DNSRelay.request_mapper}')
+        # Checking client DNS ID and Address info to relay query back to host
+        client_query = self.DNSRelay.request_mapper.pop(dns_id, None)
+        if (client_query):
+            server_response.parse()
+            tools.p(f'Secure Request Received from Server. DNS ID: {server_response.dns_id} | {server_response.request}')
+            server_response.rewrite(dns_id=client_query.dns_id)
+            if (client_query.address):
                 ## Parsing packet and rewriting TTL to minimum 5 minutes/max 1 hour and changing DNS ID back to original.
-                packet.rewrite(dns_id=client_dns_id)
+                self.DNSRelay.send_to_client(server_response, client_query.address)
 
-                client_ip, client_port = client_address
-                # these vars will be set to none if it was a request generated by the caching system.
-                if (client_ip and client_port):
-                    self.DNSRelay.send_to_client(packet, client_address)
-
-                # adding packets to cache if not already in and incrimenting the counter for the requested domain.
-                self.DNSRelay.DNSCache.add(packet, client_address)
-                self.DNSRelay.DNSCache.increment_counter(packet.request)
-
-            #see if this can be in the if statement. cant remember why it was pulled out.
-            self.dns_connection_tracker.pop(packet.dns_id, None)
-        except ValueError:
-            print(data_from_server)
-            traceback.print_exc()
-        except Exception:
-            traceback.print_exc()
-
-    # Acquire ID Lock, then generates a random number until a unique number is found. Once found
-    # it will be stored and used for the external TLS query to ensure all requests are unique
-    def _generate_id_and_store(self):
-        with self.unique_id_lock:
-            while True:
-                dns_id = random.randint(1, 32000)
-                if (dns_id not in self.dns_connection_tracker):
-                    self.dns_connection_tracker.update({dns_id: ''})
-
-                    return dns_id
+            # adding packets to cache if not already in and incrimenting the counter for the requested domain.
+            self.DNSRelay.DNSCache.add(server_response, client_query.address)
 
     # Connect will retry 3 times if issues, then mark TLS server as inactive and timestamp
     # timestamp will be used to re attempt to connect after retry limit exceeded in message
     # queue handler method
     def _tls_connect(self, secure_server):
-        now = time.time()
+        tools.p(f'PIPELINE CLOSED. REESTABLISHING CONNECTION TO SERVER: {secure_server}.')
         try:
             sock = socket(AF_INET, SOCK_STREAM)
-            sock.bind((CLIENT_ADDRESS, 0))
-            sock.settimeout(20)
+            sock.settimeout(30)
 
             # Wrap socket and Connect. If exception will return None which will have
             # the queue handler try the other server if available and will mark this
             # server as down
             self.secure_socket = self.tls_context.wrap_socket(sock, server_hostname=secure_server)
             self.secure_socket.connect((secure_server, DNS_TLS_PORT))
-        except error:
-            self.secure_socket = None
 
-        if (self.secure_socket):
-            self.socket_available = True
-            self.DNSRelay.dns_servers[secure_server].update({'tls': True})
-        else:
-            self.socket_available = False
-            self.DNSRelay.dns_servers[secure_server].update({'tls': False, 'retry': now})
+            threading.Thread(target=self._receive_queries).start()
+        except error as e:
+            self.secure_socket = None
+            return e
 
     def _create_tls_context(self):
         context = ssl.create_default_context()
@@ -348,6 +343,30 @@ class TLSRelay:
         context.load_verify_locations('/etc/ssl/certs/ca-certificates.crt')
 
         return context
+
+    def tls_reachability(self):
+        while True:
+            for secure_server in self.DNSRelay.dns_servers.keys():
+                error = self._tls_connection_handler(secure_server)
+                if error:
+                    tools.p(f'TLS reachability failed for: {secure_server}')
+                    self.DNSRelay.dns_servers[secure_server].update({'tls': False})
+                else:
+                    tools.p(f'TLS reachability successful for: {secure_server}')
+                    self.DNSRelay.dns_servers[secure_server].update({'tls': True})
+
+            time.sleep(10)
+
+    def _tls_connection_handler(self, secure_server):
+        try:
+            sock = socket(AF_INET, SOCK_STREAM)
+            sock.settimeout(2)
+            secure_socket = self.tls_context.wrap_socket(sock, server_hostname=secure_server)
+            secure_socket.connect((secure_server, DNS_TLS_PORT))
+        except (error,timeout) as e:
+            return e
+        finally:
+            secure_socket.close()
 
 if __name__ == '__main__':
     Relay = DNSRelay()
