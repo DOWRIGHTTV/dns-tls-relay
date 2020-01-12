@@ -201,8 +201,7 @@ class DNSCache:
             num_records = len(self.dns_cache)
             tools.p(f'CACHE SIZE: {cache_size} | NUMBER OF RECORDS: {num_records} | CACHE: {self.dns_cache}')
 
-#            time.sleep(5*60)
-            time.sleep(10)
+            time.sleep(3*60)
 
     # automated process to keep top 20 queried domains permanently in cache. it will use the current caches packet to generate
     # a new packet and add to the standard tls queue. the recieving end will know how to handle this by settings the client address
@@ -226,8 +225,7 @@ class DNSCache:
             with open('top_domains_cache.txt', 'a+') as top_domains:
                 top_domains.write(f'{self.top_domains}\n')
 
-#            time.sleep(3*60)
-            time.sleep(15)
+            time.sleep(3*60)
 
 
 class TLSRelay:
