@@ -150,6 +150,8 @@ class DNSCache:
 
         self.domain_counter_lock = threading.Lock()
 
+        self._load_top_domains()
+
     # queries will be added to cache if it is not already cached or has expired or if the dns response is the
     # result from an internal dns request for top domains
     def add(self, server_response, client_address):
@@ -222,10 +224,17 @@ class DNSCache:
             # logging top domains in cache for reference. if top domains are useless, will work on a way to ensure only important domains
             # are cached. worst case can make them configurable.
             top_domains = {'top_domains': self.top_domains}
-            with open('top_domains_cache.txt', 'a+') as top_domains:
-                top_domains.write(f'{self.top_domains}\n')
+            tools.write_cache(top_domains, 'top_domains_cache.json')
 
             time.sleep(3*60)
+
+    # load top domains from file for persistence between restarts/shutdowns
+    def _load_top_domains(self):
+        dns_cache = tools.load_cache('top_domains_cache.json')
+        self.top_domains = dns_cache['top_domains']
+
+        temp_dict = reversed(list(self.top_domains))
+        self.domain_counter = Counter({domain: count for count, domain in enumerate(temp_dict)})
 
 
 class TLSRelay:

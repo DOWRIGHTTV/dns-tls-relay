@@ -3,6 +3,7 @@
 VERBOSE = True
 
 import struct
+import json
 
 from types import SimpleNamespace
 
@@ -75,3 +76,16 @@ def record_parse_error(log_info):
         errors.write(f'NAME LENGTH: {info.nlen}\n')
         errors.write(f'{info.data}\n')
         errors.write('==========================\n')
+
+def load_cache(filename):
+    try:
+        with open(filename, 'r') as settings:
+            cache = json.load(settings)
+    except FileNotFoundError:
+        cache = {'top_domains': {}}
+
+    return cache
+
+def write_cache(data, filename):
+    with open(filename, 'w') as cache_file:
+        json.dump(data, cache_file, indent=4)
