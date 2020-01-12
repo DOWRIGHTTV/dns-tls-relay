@@ -49,6 +49,10 @@ class DNSRelay:
         self.cache_lock = threading.Lock()
 
     def Start(self):
+        if (os.geteuid()):
+            print('MUST RUN PROXY AS ROOT! Exiting...')
+            sys.exit(1)
+
         self.DNSCache = DNSCache(self)
         self.TLSRelay = TLSRelay(self)
 
@@ -59,9 +63,6 @@ class DNSRelay:
         self._ready_interface_service()
 
     def _main(self):
-        self.sock = socket(AF_INET, SOCK_DGRAM)
-        self.sock.bind((LISTENING_ADDRESS, DNS_PORT))
-
         tools.p(f'[+] Listening -> {LISTENING_ADDRESS}:{DNS_PORT}')
         while True:
             try:
