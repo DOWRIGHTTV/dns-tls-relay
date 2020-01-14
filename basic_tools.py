@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 
-VERBOSE = True
+from dns_tls_relay import VERBOSE
 
 import struct
 import json
