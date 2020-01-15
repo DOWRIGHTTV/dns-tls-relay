@@ -8,6 +8,7 @@ import threading
 import json
 import random
 import ssl
+import select
 
 from copy import deepcopy
 from collections import deque, Counter
@@ -44,8 +45,8 @@ TOP_DOMAIN_COUNT = 20
 class DNSRelay:
     def __init__(self):
         self.dns_servers = {}
-        self.dns_servers[PUBLIC_SERVER_1] = {'tls': True}
-        self.dns_servers[PUBLIC_SERVER_2] = {'tls': True}
+        self.dns_servers[PUBLIC_SERVER_1] = {'tls_up': True}
+        self.dns_servers[PUBLIC_SERVER_2] = {'tls_up': True}
 
         self.request_mapper = {}
         self.unique_id_lock = threading.Lock()
@@ -59,10 +60,9 @@ class DNSRelay:
         self.DNSCache = DNSCache(self)
         self.TLSRelay = TLSRelay(self)
 
-        threading.Thread(target=self.TLSRelay.tls_reachability).start()
         threading.Thread(target=self.DNSCache.auto_clear_cache).start()
         threading.Thread(target=self.DNSCache.auto_top_domains).start()
-        threading.Thread(target=self.TLSRelay.process_queue).start()
+        threading.Thread(target=self.TLSRelay.start).start()
         self._ready_interface_service()
 
     def _main(self):
@@ -247,9 +247,6 @@ class TLSRelay:
         self.DNSRelay = DNSRelay
 
         self.dns_tls_queue = deque()
-
-        self.secure_socket = None
-        self.already_closed = False
         self.socket_lock = threading.Lock()
 
         self.tls_context = self._create_tls_context()
@@ -257,75 +254,67 @@ class TLSRelay:
     def add_to_queue(self, client_query):
         self.dns_tls_queue.append(client_query)
 
-    def process_queue(self):
-        print('[+] Starting TLS queue handler.')
-        while True:
-            if (not self.dns_tls_queue):
-            # waiting 1ms before checking queue again for idle perf
-                time.sleep(.001)
-                continue
+    def start(self):
+        threading.Thread(target=self._tls_reachability).start()
 
-            client_query = self.dns_tls_queue.popleft()
-            # if socket is not available, we will attempt to connect to remote servers before sending request
-            if (not self.secure_socket):
-                self._logic_handler()
-            else:
-                tools.p('PIPELINING REQUEST.')
+        self._server_connection_handler()
+        threading.Thread(target=(self._recv_handler)).start()
 
-            if (self.secure_socket):
-                self._send_query(client_query)
+        self._query_handler()
 
-    # Iterating over dns server list and calling to create a connection to first available. this will only happen
-    # if a socket connection isnt already established.
-    def _logic_handler(self):
+    # iterating over dns server list and calling to create a connection to first available server. this will only happen
+    # if a socket connection isnt already established when attempting to send query.
+    def _server_connection_handler(self):
         for secure_server, status in self.DNSRelay.dns_servers.items():
-            if (status['tls']):
+            if (status['tls_up']):
                 error = self._tls_connect(secure_server)
                 if (not error):
                     break
         else:
             tools.p('NO SECURE SERVER AVAILABLE!')
 
-    def _send_query(self, client_query):
-        try:
-            tools.p(f'SENDING SECURE DATA FOR REQUEST: {client_query.request}')
-            self.secure_socket.sendall(client_query.send_data)
-        except OSError:
-            self._close_threaded_socket()
+    # general loop for processing dns queries. if queue is empty will sleep for 1MS for idle performance.
+    def _query_handler(self):
+        print('[+] Started tls dns query handler thread.')
+        while True:
+            if (not self.dns_tls_queue):
+                time.sleep(.001)
+                continue
 
-    def _receive_queries(self):
+            client_query = self.dns_tls_queue.popleft()
+            self._send_query(client_query)
+
+    # attempt to send query, if socket error will reconnect and try again.
+    def _send_query(self, client_query):
+        for i in range(3):
+            try:
+                print(f'SENDING SECURE [{i}]: {client_query.request}')
+                self.secure_socket.send(client_query.send_data)
+            except OSError:
+                self._server_connection_handler()
+                threading.Thread(target=self._recv_handler).start()
+            else:
+                break
+
+    # receive data from server. if dns response will call parse method else will close the socket.
+    def _recv_handler(self):
         try:
             while True:
-                data_from_server = self.secure_socket.recv(4096)
+                data_from_server = self.secure_socket.recv(1024)
                 if (not data_from_server):
-                    tools.p('PIPELINE CLOSED BY REMOTE SERVER.')
+                    tools.p('PIPELINE CLOSED BY REMOTE SERVER!')
                     break
-
                 self._parse_server_response(data_from_server)
-        except (timeout, OSError) as e:
-            tools.p(e)
+        except (timeout, OSError):
+            pass
         finally:
-            self._close_threaded_socket()
+           self.secure_socket.close()
 
-    # will ensure only the first thread with issues can close and reset the socket. the second one will reset the bool.
-    def _close_threaded_socket(self):
-        with self.socket_lock:
-            if (not self.already_closed):
-                self.secure_socket.close()
-                self.secure_socket = None
-                self.already_closed = True
-            else:
-                self.already_closed = False
-
-    # Response Handler will match all recieved request responses from the server, match it to the host connection
-    # and relay it back to the correct host/port. this will happen as they are recieved. the socket will be closed
-    # once the recieved count matches the expected/sent count or from socket timeout
+    # parse all valid data from the server, get the client request object from request mapper dict,
+    # then relay the dns message to the correct host/port. this will happen as they are recieved.
     def _parse_server_response(self, data_from_server):
-        # Checking the DNS ID in packet, Adjusted to ensure uniqueness
         server_response = PacketManipulation(data_from_server)
         dns_id = server_response.get_dns_id()
-#        tools.p(f'RECEIVED SOMETHING| ID: {dns_id} | MAPPER: {self.DNSRelay.request_mapper}')
-        # Checking client DNS ID and Address info to relay query back to host
         client_query = self.DNSRelay.request_mapper.pop(dns_id, None)
         if (client_query):
             server_response.parse()
@@ -338,9 +327,7 @@ class TLSRelay:
             # adding packets to cache if not already in and incrimenting the counter for the requested domain.
             self.DNSRelay.DNSCache.add(server_response, client_query.address)
 
-    # Connect will retry 3 times if issues, then mark TLS server as inactive and timestamp
-    # timestamp will be used to re attempt to connect after retry limit exceeded in message
-    # queue handler method
+    # attempt to connect to tls server sent in from server logic method. if connection fails, will return error else return none
     def _tls_connect(self, secure_server):
         tools.p(f'PIPELINE CLOSED. REESTABLISHING CONNECTION TO SERVER: {secure_server}.')
         try:
@@ -350,24 +337,15 @@ class TLSRelay:
             self.secure_socket = self.tls_context.wrap_socket(sock, server_hostname=secure_server)
             self.secure_socket.connect((secure_server, DNS_TLS_PORT))
         except OSError as e:
-            self.secure_socket = None
             return e
-        else:
-            threading.Thread(target=self._receive_queries).start()
 
-    def _create_tls_context(self):
-        context = ssl.create_default_context()
-        context = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
-        context.verify_mode = ssl.CERT_REQUIRED
-        context.load_verify_locations('/etc/ssl/certs/ca-certificates.crt')
-
-        return context
-
-    def tls_reachability(self):
+    # main loop to probe remote server for TLS connectivity to detect either downed, slow response(2 seconds), or non TLS
+    # ready servers.
+    def _tls_reachability(self):
         print('[+] Starting TLS reachability tests.')
         while True:
             for secure_server, server_info in self.DNSRelay.dns_servers.items():
-                error = self._tls_connection_handler(secure_server)
+                error = self._tls_reachability_worker(secure_server)
                 if error:
                     tools.p(f'TLS reachability failed for: {secure_server}')
                     server_info['tls_up'] = False
@@ -377,16 +355,27 @@ class TLSRelay:
 
             time.sleep(10)
 
-    def _tls_connection_handler(self, secure_server):
+    # worker method for tls reachability functionality. will return error if failure to connect or timeout (2 seconds.)
+    def _tls_reachability_worker(self, secure_server):
         try:
             sock = socket(AF_INET, SOCK_STREAM)
             sock.settimeout(2)
+
             secure_socket = self.tls_context.wrap_socket(sock, server_hostname=secure_server)
             secure_socket.connect((secure_server, DNS_TLS_PORT))
         except (OSError,timeout) as e:
             return e
         finally:
             secure_socket.close()
+
+    # general tls context used/reused by all sockets created for the tls relay. loading verify locations from file is slow.
+    def _create_tls_context(self):
+        context = ssl.create_default_context()
+        context = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+        context.verify_mode = ssl.CERT_REQUIRED
+        context.load_verify_locations('/etc/ssl/certs/ca-certificates.crt')
+
+        return context
 
 if __name__ == '__main__':
     Relay = DNSRelay()
