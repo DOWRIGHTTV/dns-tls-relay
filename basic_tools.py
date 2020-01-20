@@ -1,10 +1,9 @@
 #!/usr/bin/env python3
 
-from dns_tls_relay import VERBOSE
-
 import struct
 import json
 
+from dns_tls_relay import VERBOSE
 from types import SimpleNamespace
 
 def p(thing_to_print):
@@ -62,6 +61,19 @@ def create_dns_query_header(dns_id, *, cd=0):
 
     return dns_header
 
+def load_cache(filename):
+    try:
+        with open(filename, 'r') as settings:
+            cache = json.load(settings)
+    except FileNotFoundError:
+        cache = {'top_domains': {}, 'filter': []}
+
+    return cache
+
+def write_cache(data, filename):
+    with open(filename, 'w') as cache_file:
+        json.dump(data, cache_file, indent=4)
+
 def record_parse_error(log_info):
     info = SimpleNamespace(**log_info)
 
@@ -76,16 +88,3 @@ def record_parse_error(log_info):
         errors.write(f'NAME LENGTH: {info.nlen}\n')
         errors.write(f'{info.data}\n')
         errors.write('==========================\n')
-
-def load_cache(filename):
-    try:
-        with open(filename, 'r') as settings:
-            cache = json.load(settings)
-    except FileNotFoundError:
-        cache = {'top_domains': {}}
-
-    return cache
-
-def write_cache(data, filename):
-    with open(filename, 'w') as cache_file:
-        json.dump(data, cache_file, indent=4)

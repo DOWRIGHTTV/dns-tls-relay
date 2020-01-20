@@ -25,7 +25,7 @@ VERBOSE = False
 LISTENING_ADDRESS = '127.0.0.1'
 
 # adress which the relay will use to talk to a public resolver
-CLIENT_ADDRESS = '192.168.5.135'
+CLIENT_ADDRESS = '10.0.2.15'
 
 # must support DNS over TLS (not https/443, tcp/853)
 PUBLIC_SERVER_1 = '1.1.1.1'
@@ -39,6 +39,7 @@ DNS_PORT = 53
 DNS_TLS_PORT = 853
 DEFAULT_TTL = 3600
 
+DNS_QUERY = 0
 TOP_DOMAIN_COUNT = 20
 
 
@@ -70,40 +71,40 @@ class DNSRelay:
         while True:
             try:
                 data_from_client, client_address = self.sock.recvfrom(1024)
- #               tools.p(f'Receved data from client: {client_address[0]}:{client_address[1]}.')
-                if (not data_from_client):
-                    break
-
-                self.parse_queries(data_from_client, client_address)
+                if (data_from_client):
+#                    tools.p(f'Receved data from client: {client_address[0]}:{client_address[1]}.')
+                    self.parse_queries(data_from_client, client_address)
             except OSError:
                 break
 
         self._ready_interface_service()
 
+    # if no parse errors will match IPv4 DNS queries (all others will be dropped) then send packet data
+    # to be handled by cache or added to external resolver queue.
     def parse_queries(self, data_from_client, client_address):
         try:
             client_query = RequestHandler(data_from_client, client_address)
             client_query.parse()
-
-            ## Matching IPV4 DNS queries only. All other will be dropped.
-            if (not client_query.qr and client_query.qtype == A_RECORD):
-                threading.Thread(target=self._process_query, args=(client_query,)).start()
-        except Exception as E:
-            tools.p(f'MAIN: {E}')
-
-    def send_to_client(self, server_response, client_address):
-        ## Relaying packet from server back to host
-        self.sock.sendto(server_response.send_data, client_address)
-        tools.p(f'Request: {server_response.request} RELAYED TO {client_address[0]}: {client_address[1]}')
+        except Exception:
+            traceback.print_exc()
+        else:
+            if (client_query.qr == DNS_QUERY and client_query.qtype == A_RECORD):
+                self._process_query(client_query)
 
     def _process_query(self, client_query):
-        self.DNSCache.increment_counter(client_query.request)
+        if self.DNSCache.valid_top_domain(client_query.request):
+            self.DNSCache.increment_counter(client_query.request)
         cached_packet = self.DNSCache.search(client_query)
         if (cached_packet):
             self.send_to_client(client_query, client_query.address)
             tools.p(f'CACHED RESPONSE | NAME: {client_query.request} TTL: {client_query.calculated_ttl}')
         else:
             self.external_query(client_query)
+
+    def send_to_client(self, server_response, client_address):
+        ## Relaying packet from server back to host
+        self.sock.sendto(server_response.send_data, client_address)
+        tools.p(f'Request: {server_response.request} RELAYED TO {client_address[0]}: {client_address[1]}')
 
     # will check to see if query is cached/ has been requested before. if not will add to queue for standard query
     def external_query(self, client_query):
@@ -114,13 +115,13 @@ class DNSRelay:
         self.TLSRelay.add_to_queue(client_query)
 
     # Generate a unique DNS ID to be used by TLS connections only. Applies a lock on the function to ensure this
-    # id is thread safe and uniqueness is guranteed. IDs are stored in a dictionary for reference.
+    # ID is thread safe and uniqueness is guranteed. IDs are stored in a dictionary for reference.
     def _generate_id_and_store(self):
         with self.unique_id_lock:
             while True:
                 dns_id = random.randint(1, 32000)
                 if (dns_id not in self.request_mapper):
-                    self.request_mapper.update({dns_id: 1})
+                    self.request_mapper[dns_id] = 1
 
                     return dns_id
 
@@ -235,11 +236,20 @@ class DNSCache:
 
     # load top domains from file for persistence between restarts/shutdowns
     def _load_top_domains(self):
-        dns_cache = tools.load_cache('top_domains_cache.json')
+        dns_cache = tools.load_cache('top_domains.json')
         self.top_domains = dns_cache['top_domains']
 
         temp_dict = reversed(list(self.top_domains))
         self.domain_counter = Counter({domain: count for count, domain in enumerate(temp_dict)})
+
+        self.top_domains_filter = dns_cache['filter']
+
+    def valid_top_domain(self, request):
+        for td_filter in self.top_domains_filter:
+            if (td_filter in request):
+                return False
+
+        return True
 
 
 class TLSRelay:
@@ -332,7 +342,7 @@ class TLSRelay:
         tools.p(f'PIPELINE CLOSED. REESTABLISHING CONNECTION TO SERVER: {secure_server}.')
         try:
             sock = socket(AF_INET, SOCK_STREAM)
-            sock.settimeout(30)
+            sock.settimeout(10)
 
             self.secure_socket = self.tls_context.wrap_socket(sock, server_hostname=secure_server)
             self.secure_socket.connect((secure_server, DNS_TLS_PORT))
@@ -346,7 +356,7 @@ class TLSRelay:
         while True:
             for secure_server, server_info in self.DNSRelay.dns_servers.items():
                 error = self._tls_reachability_worker(secure_server)
-                if error:
+                if (error):
                     tools.p(f'TLS reachability failed for: {secure_server}')
                     server_info['tls_up'] = False
                 else:
