@@ -1,0 +1,9 @@
+{
+    "filter": [
+        "-",
+        "ntp",
+        "api.",
+        "microsoft",
+        "ubuntu"
+    ]
+}

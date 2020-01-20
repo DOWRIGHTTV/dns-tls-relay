@@ -70,6 +70,15 @@ def load_cache(filename):
 
     return cache
 
+def load_filter(filename):
+    try:
+        with open(filename, 'r') as settings:
+            domain_filter = json.load(settings)
+    except FileNotFoundError:
+        domain_filter = {'filter': []}
+
+    return domain_filter
+
 def write_cache(data, filename):
     with open(filename, 'w') as cache_file:
         json.dump(data, cache_file, indent=4)

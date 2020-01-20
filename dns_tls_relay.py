@@ -236,13 +236,14 @@ class DNSCache:
 
     # load top domains from file for persistence between restarts/shutdowns
     def _load_top_domains(self):
-        dns_cache = tools.load_cache('top_domains.json')
+        dns_cache = tools.load_cache('top_domains_cache.json')
         self.top_domains = dns_cache['top_domains']
 
         temp_dict = reversed(list(self.top_domains))
         self.domain_counter = Counter({domain: count for count, domain in enumerate(temp_dict)})
 
-        self.top_domains_filter = dns_cache['filter']
+        dns_cache_filter = tools.load_filter('top_domains_filter.json')
+        self.top_domains_filter = dns_cache_filter['filter']
 
     def valid_top_domain(self, request):
         for td_filter in self.top_domains_filter:
