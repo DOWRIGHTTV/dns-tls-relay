@@ -19,7 +19,7 @@ Depending on the version of linux will depend on which TLS version is used. For 
     the openssl version to support TLS 1.3. TLS 1.3 is preferred because even the ssl certificate is encrypted.
 
 Local Caching:
-All records will be cached for a minimum of 5 minutes to imporve performance.
+All records will be cached for a minimum of 5 minutes to improve performance.
 The mose requested domains on your network will be permanently cached (checked every 5 minutes) to ensure you will
     always receive a cached response for these domains. (the system will ensure the records are up to date in the background)
 
