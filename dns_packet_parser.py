@@ -8,9 +8,8 @@ import basic_tools as tools
 TCP = 6
 UDP = 17
 
+ROOT = 0
 A_RECORD = 1
-CNAME = 5
-SOA = 6
 OPT = 41
 
 DEFAULT_TTL = 3600
@@ -26,16 +25,18 @@ class RequestHandler:
         self.data = data
         self.address = address
 
-        self.dns_id = 69
-        self.send_data = None
+        self.dns_id         = 69
+        self.send_data      = None
         self.calculated_ttl = None
+        self.keepalive      = False
+
+        # OPT record defaults
+        self.arc = 0
+        self.additional_data = b''
 
     def parse(self):
-        try:
-            self._parse_header()
-            self._parse_dns_query()
-        except Exception as E:
-            tools.p(E)
+        self._parse_header()
+        self._parse_dns_query()
 
     def _parse_header(self):
         self.dns_header = self.data[:12]
@@ -53,16 +54,12 @@ class RequestHandler:
         self.rc = tools.convert_bit(self.dns_header[3] & 1 << 0)
 
     def _parse_dns_query(self):
-        dns_query = self.data[12:].split(b'\x00',1)
-        query_name = dns_query[0]
-        query_info = dns_query[1][:4]
-        self.question_record = query_name + b'\x00' + query_info
+        dns_query = self.data[12:]
+        self.request, query_info, q_len = tools.convert_question_record(dns_query) # www.micro.com or micro.com || sd.micro.com
 
-        self.request = tools.convert_dns_bytes_to_string(query_name) # www.micro.com or micro.com || sd.micro.com
-
-        query_info = struct.unpack('!2H', query_info)
-        self.qtype = query_info[0]
-        self.qclass = query_info[1]
+        self.qtype, self.qclass = struct.unpack('!2H', query_info)
+        self.question_record = dns_query[:q_len]
+        self.additional_data = dns_query[q_len:]
 
     def generate_cached_response(self, calculated_ttl, resource_records):
         self.calculated_ttl = calculated_ttl
@@ -78,49 +75,46 @@ class RequestHandler:
         if (self.send_data):
             raise ValueError('packet data has already been created for this query.')
 
-        self.send_data = tools.create_dns_query_header(dns_id, cd=self.cd)
+        # if additional data seen after question record, will mark additional record count as 1 in dns header
+        if (self.additional_data):
+            self.arc = 1
+        self.send_data  = tools.create_dns_query_header(dns_id, self.arc, cd=self.cd)
         self.send_data += tools.convert_dns_string_to_bytes(self.request)
-        self.send_data += struct.pack('!B2H', 0,1,1)
-        self.send_data = struct.pack('!H', len(self.send_data)) + self.send_data
+        self.send_data += struct.pack('!2H',self.qtype,1)
+        self.send_data += self.additional_data
+        self.send_data  = struct.pack('!H', len(self.send_data)) + self.send_data
 
-    def set_required_fields(self, request, cd=1):
+    def set_required_fields(self, request, cd=1, *, keepalive=False):
         if (self.data):
             raise ValueError('this method is only to be used for locally generated queries.')
-
-        self.request = request
-        self.cd = cd
+        # harcorded qtype temporary. can change if needed.
+        self.request   = request
+        self.qtype     = 1
+        self.cd        = cd
+        self.keepalive = keepalive
 
 
 class PacketManipulation:
     def __init__(self, data):
-        self.data = data[2:]
-        self.dns_id = 0
-        self.qtype = 0
-        self.qclass = 0
+        self.data      = data[2:]
+        self.dns_id    = 0
         self.cache_ttl = 0
-
-        self.request2 = None
-        self.dns_opt = False
-        self.dns_response = False
-        self.dns_pointer = b'\xc0\x0c'
-
-        self.cache_header = b''
+        self.dns_opt   = False
         self.send_data = b''
 
         self.offset = 0
-        self.a_record_count = 0
-        self.standard_records = []
-        self.authority_records =[]
+        self.a_record_count     = 1
+        self.n_resource_count   = 0
+        self.n_authority_count  = 0
+        self.resource_records   = []
+        self.authority_records  = []
         self.additional_records = []
+        self.data_to_cache      = None
 
     def parse(self):
-        try:
-            self.header()
-            self.question_record_handler()
-            self.get_qname()
-            self.resource_record_handler()
-        except Exception as E:
-            tools.p(E)
+        self.header()
+        self.question_record_handler()
+        self.resource_record_handler()
 
     def get_dns_id(self):
         dns_id = struct.unpack('!H', self.data[:2])[0]
@@ -129,59 +123,42 @@ class PacketManipulation:
 
     def header(self):
         self.dns_header = self.data[:12]
-        self.dns_id = struct.unpack('!H', self.data[:2])[0]
-        self.dns_flags = self.data[2:4]
+        self.dns_id     = struct.unpack('!H', self.data[:2])[0]
+        self.dns_flags  = self.data[2:4]
 
         content_info = struct.unpack('!4H', self.dns_header[4:12])
-        self.question_count = content_info[0]
-        self.standard_count = content_info[1] # answer count (name standard for iteration purposes in parsing)
-        self.authority_count = content_info[2]
+        self.question_count   = content_info[0]
+        self.resource_count   = content_info[1]
+        self.authority_count  = content_info[2]
         self.additional_count = content_info[3]
 
     def question_record_handler(self):
-        dns_payload = self.data[12:]
+        dns_query = self.data[12:]
+        self.request, query_info, q_len = tools.convert_question_record(dns_query) # www.micro.com or micro.com || sd.micro.com
 
-        query_info = dns_payload.split(b'\x00',1)
-        record_type_info = struct.unpack('!2H', query_info[1][0:4])
-        self.query_name = query_info[0]
-        self.qtype = record_type_info[0]
-        self.qclass = record_type_info[1]
-
-        self.name_length = len(self.query_name)
-        question_length = self.name_length + 5
-
-        self.question_record = dns_payload[:question_length]
-        self.resource_record = dns_payload[question_length:]
+        self.qtype, self.qclass = struct.unpack('!2H', query_info)
+        self.question_record = dns_query[:q_len]
+        self.resource_record = dns_query[q_len:]
 
     def get_record_type(self, data):
-        #checking if record starts with a pointer/is a pointer
+        #checking if record starts with a pointer
         if (data.startswith(b'\xc0')):
-            record_name = data[:2]
+            nlen = 2
         else:
-            record_name = data.split(b'\x00', 1)[0]
-
-        nlen = len(record_name)
-        #if record contains a pointer, no action taken, if not 1 will be added to the length to adjust for the pad at the end of the name
-        if (b'\xc0' not in record_name):
-            nlen += 1
+            nlen = len(data.split(b'\x00', 1)[0]) + 1
 
         record_type = struct.unpack('!H', data[nlen:nlen+2])[0]
-        if (record_type == A_RECORD):
-            record_length = 10 + 4 + nlen
+        record_ttl  = struct.unpack('!L', data[nlen+4:nlen+8])[0]
+        data_length = struct.unpack('!H', data[nlen+8:nlen+10])[0]
 
-        elif (record_type in {CNAME, SOA}):
-            data_length = struct.unpack('!H', data[nlen+8:nlen+10])[0]
-            record_length = 10 + data_length + nlen
-
-        record_ttl = struct.unpack('!L', data[nlen+4:nlen+8])[0]
+        record_length = 10 + data_length + nlen
 
         return record_type, record_length, record_ttl, nlen
 
     # grabbing the records contained in the packet and appending them to their designated lists to be inspected by other methods.
     # count of records is being grabbed/used from the header information
     def resource_record_handler(self):
-        # parsing standard and authority records
-        for record_type in ['standard', 'authority']:
+        for record_type in ['resource', 'authority']:
             record_count = getattr(self, f'{record_type}_count')
             records_list = getattr(self, f'{record_type}_records')
             for _ in range(record_count):
@@ -204,26 +181,29 @@ class PacketManipulation:
 
     def rewrite(self, dns_id, response_ttl=DEFAULT_TTL):
         resource_records = []
-        for record_type in ['standard', 'authority']:
-            all_records = getattr(self, f'{record_type}_records')
-            for record_info in all_records:
+        for records in ['resource', 'authority']:
+            current_records = getattr(self, f'{records}_records')
+            for record_info in current_records:
                 record_type = record_info[0]
-                if (record_type != A_RECORD or self.a_record_count < MAX_A_RECORD_COUNT):
+                if (record_type != A_RECORD or self.a_record_count <= MAX_A_RECORD_COUNT):
                     record = self.ttl_rewrite(record_info, response_ttl)
+                    record_count  = getattr(self, f'n_{records}_count')
+                    setattr(self, f'n_{records}_count', record_count + 1)
 
                     resource_records.append(record)
 
         # setting add record count to 0 and assigning variable for data to cache prior to appending additional records
-        self.data_to_cache = resource_records
+        if (self.request):
+            self.data_to_cache = resource_records
         # additional records will remain intact until otherwise needed
         for record in self.additional_records:
             resource_records.append(record)
 
-        self.send_data = struct.pack('!H', dns_id)
+        self.send_data  = struct.pack('!H', dns_id)
         self.send_data += self.dns_flags
         self.send_data += struct.pack('!H', self.question_count)
-        self.send_data += struct.pack('!H', self.a_record_count)
-        self.send_data += struct.pack('!H', self.authority_count)
+        self.send_data += struct.pack('!H', self.n_resource_count)
+        self.send_data += struct.pack('!H', self.n_authority_count)
         self.send_data += struct.pack('!H', self.additional_count)
 
         self.send_data += self.question_record
@@ -252,25 +232,3 @@ class PacketManipulation:
 
         # returning rewrittin resource record
         return record_front + new_record_ttl + record_back
-
-    def get_qname(self):
-        b = len(self.query_name)
-        qname = struct.unpack(f'!{b}B', self.query_name)
-
-        # coverting query name from bytes to string
-        length = qname[0]
-        qname_raw = ''
-        for byte in qname[1:]:
-            if (length != 0):
-                qname_raw += chr(byte)
-                length -= 1
-                continue
-
-            length = byte
-            qname_raw += '.'
-
-        self.request = qname_raw.lower() # www.micro.com or micro.com || sd.micro.com
-        if ('.' in self.request):
-            req = self.request.split('.')
-            self.request2 = '.'.join(req[-2:]) # micro.com or co.uk
-            self.request_tld = f'.{req[-1]}' # .com

@@ -13,27 +13,34 @@ def p(thing_to_print):
 def convert_bit(bit):
     return 1 if bit else 0
 
-def convert_dns_bytes_to_string(domain_name):
-    length = domain_name[0]
-    domain_raw = ''
-    for byte in domain_name[1:]:
-        if (length != 0):
-            domain_raw += chr(byte)
-            length -= 1
-            continue
+def convert_question_record(dns_data):
+    query_name = []
+    while True:
+        length = dns_data[0]
+        # will break on pad or root name lookup
+        if (length == 0): break
 
-        length = byte
-        domain_raw += '.'
+        query_name.append(dns_data[1:1+length].decode())
+        dns_data = dns_data[length+1:]
 
-    return domain_raw.lower()
+    query_name = '.'.join(query_name)
+    query_info = dns_data[1:5]
+    q_len = len(query_name) + len(query_info) + 2 # initial length + pad
+
+    return query_name, query_info, q_len
 
 def convert_dns_string_to_bytes(domain_name):
+    if (not domain_name):
+        return b'\x00'
+
     split_domain = domain_name.split('.')
     domain_bytes = b''
     for part in split_domain:
         domain_bytes += struct.pack('B', len(part))
         for char in part:
             domain_bytes += struct.pack('B', ord(char))
+    else:
+        domain_bytes += b'\x00'
 
     return domain_bytes
 
@@ -50,14 +57,14 @@ def create_dns_response_header(dns_id, record_count=1, *, rd=1, cd=0):
     return dns_header
 
 # will create dns header specific to request/query. default resource record count is 1
-def create_dns_query_header(dns_id, *, cd=0):
+def create_dns_query_header(dns_id, arc=0, *, cd=0):
     dns_header = struct.pack('!H', dns_id)
 
     qr, op, aa, tc, rd, ra, zz, ad, rc = 0,0,0,0,1,0,0,0,0
     one = (qr << 7) | (op << 3) | (aa << 2) | (tc << 1) | (rd << 0)
     two = (ra << 7) | (zz << 6) | (ad << 5) | (cd << 4) | (rc << 0)
     dns_header += struct.pack('!2B', one, two)
-    dns_header += struct.pack('!4H', 1,0,0,0)
+    dns_header += struct.pack('!4H', 1,0,0,arc)
 
     return dns_header
 
