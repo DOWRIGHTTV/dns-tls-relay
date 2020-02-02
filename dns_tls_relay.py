@@ -19,7 +19,7 @@ import basic_tools as tools
 from dns_packet_parser import RequestHandler, PacketManipulation
 
 # toggle verbose command line outputs regarding application operation
-VERBOSE = False
+VERBOSE = True
 
 # address which the relay will receive dns requests
 LISTENING_ADDRESS = '127.0.0.1'
@@ -42,6 +42,7 @@ DEFAULT_TTL = 3600
 
 DNS_QUERY = 0
 TOP_DOMAIN_COUNT = 20
+KEEPALIVE = 69
 KEEP_ALIVE_DOMAIN = 'duckduckgo.com'
 
 
@@ -111,8 +112,8 @@ class DNSRelay:
     # will check to see if query is cached/ has been requested before. if not will add to queue for standard query
     def external_query(self, client_query):
         # this if for keep alive queries only so we can identify them on return and not process.
-        if (not client_query.keepalive):
-            new_dns_id = 69
+        if (client_query.keepalive):
+            new_dns_id = KEEPALIVE
         else:
             new_dns_id = self._generate_id_and_store()
         self.request_map[new_dns_id] = client_query
@@ -126,7 +127,7 @@ class DNSRelay:
         server_response = PacketManipulation(data_from_server)
         dns_id = server_response.get_dns_id()
         client_query = self.request_map.pop(dns_id, None)
-        if (not client_query):
+        if (not client_query or client_query.keepalive):
             return
 
         try:
@@ -296,7 +297,7 @@ class TLSRelay:
 
     def start(self):
         threading.Thread(target=self._tls_reachability).start()
-        threading.Thread(target=self._tls_keepalive).start()
+#        threading.Thread(target=self._tls_keepalive).start()
 
         self._server_connection_handler()
         threading.Thread(target=(self._recv_handler)).start()
@@ -329,6 +330,7 @@ class TLSRelay:
     def _send_query(self, client_query):
         for i in range(3):
             try:
+#                print(f'SENDING QUERY: {client_query.request} DATA: {client_query.send_data}')
                 self.secure_socket.send(client_query.send_data)
                 print(f'SENT SECURE [{i}]: {client_query.request}')
             except OSError:

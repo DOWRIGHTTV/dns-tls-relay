@@ -6,6 +6,8 @@ import json
 from dns_tls_relay import VERBOSE
 from types import SimpleNamespace
 
+ZERO = '0'
+
 def p(thing_to_print):
     if (VERBOSE):
         print(thing_to_print)
@@ -13,19 +15,24 @@ def p(thing_to_print):
 def convert_bit(bit):
     return 1 if bit else 0
 
+# parsing question record in dns query and return, name, record info, and length
+# to be used by dns query generation method. if the data starts with a null byte,
+# it is a root server query and
 def convert_question_record(dns_data):
+    q_len = 4 # initial length of 4 for fixed ammount size of record information
     query_name = []
     while True:
         length = dns_data[0]
+        q_len += length + 1 # name len + interger value of length
         # will break on pad or root name lookup
-        if (length == 0): break
+        if (length == 0):
+            break
 
         query_name.append(dns_data[1:1+length].decode())
         dns_data = dns_data[length+1:]
 
     query_name = '.'.join(query_name)
     query_info = dns_data[1:5]
-    q_len = len(query_name) + len(query_info) + 2 # initial length + pad
 
     return query_name, query_info, q_len
 

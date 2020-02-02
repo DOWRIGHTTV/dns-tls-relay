@@ -25,7 +25,7 @@ class RequestHandler:
         self.data = data
         self.address = address
 
-        self.dns_id         = 69
+        self.dns_id         = 1
         self.send_data      = None
         self.calculated_ttl = None
         self.keepalive      = False
@@ -68,8 +68,8 @@ class RequestHandler:
 
         self.send_data = tools.create_dns_response_header(self.dns_id, len(resource_records), rd=self.rd, cd=self.cd)
         self.send_data += self.question_record
-        for record in resource_records:
-            self.send_data += record[:6] + struct.pack('!L', calculated_ttl) + record[10:]
+        for offset, record in resource_records:
+            self.send_data += record[:offset+4] + struct.pack('!L', calculated_ttl) + record[offset+8:]
 
     def generate_dns_query(self, dns_id):
         if (self.send_data):
@@ -103,13 +103,19 @@ class PacketManipulation:
         self.send_data = b''
 
         self.offset = 0
-        self.a_record_count     = 1
+        self.a_record_count     = 0
         self.n_resource_count   = 0
         self.n_authority_count  = 0
         self.resource_records   = []
         self.authority_records  = []
         self.additional_records = []
-        self.data_to_cache      = None
+        self.data_to_cache      = []
+
+        # self.records = {
+        #     'resource':   [],
+        #     'authority':  [],
+        #     'additional': []
+        # }
 
     def parse(self):
         self.header()
@@ -167,7 +173,6 @@ class PacketManipulation:
 
                 resource_record = data[:record_length]
                 records_list.append((record_type, record_ttl, nlen, resource_record))
-
                 self.offset += record_length
 
         # parsing additional records
@@ -184,18 +189,18 @@ class PacketManipulation:
         for records in ['resource', 'authority']:
             current_records = getattr(self, f'{records}_records')
             for record_info in current_records:
-                record_type = record_info[0]
-                if (record_type != A_RECORD or self.a_record_count <= MAX_A_RECORD_COUNT):
+                record_type, _, name_len, _ = record_info
+                if (record_type != A_RECORD or self.a_record_count < MAX_A_RECORD_COUNT):
                     record = self.ttl_rewrite(record_info, response_ttl)
                     record_count  = getattr(self, f'n_{records}_count')
                     setattr(self, f'n_{records}_count', record_count + 1)
 
                     resource_records.append(record)
+                    # preventing root server queries from being cached
+                    if (self.request):
+                        self.data_to_cache.append((name_len, record))
 
-        # setting add record count to 0 and assigning variable for data to cache prior to appending additional records
-        if (self.request):
-            self.data_to_cache = resource_records
-        # additional records will remain intact until otherwise needed
+        # additional records/data will remain intact until otherwise needed
         for record in self.additional_records:
             resource_records.append(record)
 
