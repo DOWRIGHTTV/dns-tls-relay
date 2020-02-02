@@ -19,7 +19,7 @@ import basic_tools as tools
 from dns_packet_parser import RequestHandler, PacketManipulation
 
 # toggle verbose command line outputs regarding application operation
-VERBOSE = True
+VERBOSE = False
 
 # address which the relay will receive dns requests
 LISTENING_ADDRESS = '127.0.0.1'
@@ -297,7 +297,7 @@ class TLSRelay:
 
     def start(self):
         threading.Thread(target=self._tls_reachability).start()
-#        threading.Thread(target=self._tls_keepalive).start()
+        threading.Thread(target=self._tls_keepalive).start()
 
         self._server_connection_handler()
         threading.Thread(target=(self._recv_handler)).start()
