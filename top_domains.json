@@ -1,4 +1,5 @@
 {
+    "top_domains": {},
     "filter": [
         "-",
         "ntp",
