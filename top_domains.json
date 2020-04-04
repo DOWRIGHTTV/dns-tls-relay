@@ -2,9 +2,30 @@
     "top_domains": {},
     "filter": [
         "-",
+        "test",
+        "detect",
+        ".mozilla",
+        "oscp.",
         "ntp",
-        "api.",
+        "api",
+        "akamai",
+        "cdn",
         "microsoft",
-        "ubuntu"
+        "windows",
+        "ubuntu",
+        "dns",
+        "http",
+        "telemetry",
+        "wpad",
+        "0",
+        "1",
+        "2",
+        "3",
+        "4",
+        "5",
+        "6",
+        "7",
+        "8",
+        "9"
     ]
 }

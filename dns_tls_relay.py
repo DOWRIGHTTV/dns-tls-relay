@@ -313,7 +313,7 @@ class DNSCache(dict):
     def _load_top_domains(self):
         dns_cache = tools.load_cache('top_domains')
         self.__top_domains = dns_cache['top_domains']
-        self.__top_dom_filter = dns_cache['filter']
+        self.__top_dom_filter = set(dns_cache['filter'])
 
         temp_dict = reversed(list(self.__top_domains))
         self.__dom_counter = Counter({domain: count for count, domain in enumerate(temp_dict)})
