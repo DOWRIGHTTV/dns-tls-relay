@@ -83,7 +83,7 @@ class _ProtoRelay:
         for attempt in range(2):
             try:
                 self._relay_conn.sock.send(client_query.send_data)
-                print(f'SENT SECURE[{attempt}]: {client_query.request}')
+                Log.console(f'SENT SECURE[{attempt}]: {client_query.request}')
             except OSError:
                 if not self._register_new_socket(): break
 
@@ -104,21 +104,32 @@ class _ProtoRelay:
 
     @tools.looper(FIVE_SEC)
     def __fail_detection(self):
-        if (time.time() - self._last_sent >= FIVE_SEC
+        now = time.time()
+        Log.p(f'NOTICE: fail detection | now={now}, last_sent={self._last_sent}, send_count={self._send_cnt}')
+        if (now - self._last_sent >= FIVE_SEC
                 and self._send_cnt >= HEARTBEAT_FAIL_LIMIT):
+
             self.mark_server_down()
 
     def mark_server_down(self):
-        self._relay_conn.sock.close()
+        if (self.socket_available):
+            self._relay_conn.sock.close()
+            Log.p(f'NOTICE: {self._relay_conn.remote_ip} failed to respond to 3 messages. marking as down.')
 
-        self.DNSRelay.dns_servers[self._relay_conn.remote_ip]['tls_up'] = False
+            for server in self.DNSRelay.dns_servers:
+                if (server['ip'] == self._relay_conn.remote_ip):
+                    server[self._protocol] = False
 
     def _reset_fail_detection(self):
         self._send_cnt = 0
 
+#        Log.p(f'reset fail detection | count={self._send_cnt}')
+
     def _increment_fail_detection(self):
         self._send_cnt += 1
         self._last_sent = time.time()
+
+#        Log.p(f'NOTICE: fail detection | count={self._send_cnt}, last_seen={self._last_sent}')
 
     @property
     def socket_available(self):
@@ -149,14 +160,15 @@ class TLSRelay(_ProtoRelay):
 
         self._create_tls_context()
         threading.Thread(target=self._tls_keepalive).start()
+        threading.Thread(target=Reachability.run, args=(self.DNSRelay,)).start()
 
     # iterating over dns server list and calling to create a connection to first available server. this will only happen
     # if a socket connection isnt already established when attempting to send query.
     def _register_new_socket(self, client_query=None):
-        for secure_server, status in self.DNSRelay.dns_servers.items():
-            if (not status['tls_up']): continue
+        for secure_server in self.DNSRelay.dns_servers:
+            if (not secure_server[self._protocol]): continue
 
-            if self._tls_connect(secure_server): return True
+            if self._tls_connect(secure_server['ip']): return True
 
             self.mark_server_down()
         else:
@@ -225,3 +237,60 @@ class TLSRelay(_ProtoRelay):
         self._tls_context = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
         self._tls_context.verify_mode = ssl.CERT_REQUIRED
         self._tls_context.load_verify_locations('/etc/ssl/certs/ca-certificates.crt')
+
+
+class Reachability:
+    __slots__ = (
+        'DNSRelay', '_protocol', '_tls_context', '_udp_query'
+    )
+    def __init__(self, DNSRelay):
+        self._protocol = PROTO.TCP
+        self.DNSRelay = DNSRelay
+
+        self._create_tls_context()
+
+    @classmethod
+    def run(cls, DNSRelay):
+        '''starting remote server responsiveness detection as a thread. the remote servers will only
+        be checked for connectivity if they are mark as down during the polling interval.'''
+
+        self = cls(DNSRelay)
+        threading.Thread(target=self.tls).start()
+
+    @tools.dyn_looper
+    def tls(self):
+        if (not self.is_enabled): return TEN_SEC
+
+        for secure_server in self.DNSRelay.dns_servers:
+            if (secure_server[self._protocol]): continue # not checking if server/proto is known up
+
+            if self._tls_reachable(secure_server['ip']):
+                secure_server[self._protocol] = True
+                self.DNSRelay.tls_up = True
+
+                Log.p('NOTICE: TLS server {} has recovered.'.format(secure_server['ip']))
+
+        return THIRTY_SEC
+
+    def _tls_reachable(self, secure_server):
+        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        sock.settimeout(3)
+        secure_socket = self._tls_context.wrap_socket(sock, server_hostname=secure_server)
+        try:
+            secure_socket.connect((secure_server, PROTO.DNS_TLS))
+        except (OSError, socket.timeout):
+            return False
+        else:
+            return True
+        finally:
+            secure_socket.close()
+
+    def _create_tls_context(self):
+        self._tls_context = ssl.create_default_context()
+        self._tls_context = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+        self._tls_context.verify_mode = ssl.CERT_REQUIRED
+        self._tls_context.load_verify_locations('/etc/ssl/certs/ca-certificates.crt')
+
+    @property
+    def is_enabled(self):
+        return self._protocol == self.DNSRelay.protocol

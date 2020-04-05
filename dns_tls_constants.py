@@ -24,6 +24,8 @@ NULL_ADDR = (None, None)
 NO_DELAY = 0
 MSEC = .001
 FIVE_SEC = 5
+TEN_SEC = 10
+THIRTY_SEC = 30
 THREE_MIN = 180
 FIVE_MIN = 300
 
@@ -33,6 +35,8 @@ KEEPALIVE_INTERVAL = 8
 RELAY_CONN = namedtuple('relay_conn', 'remote_ip sock')
 DNS_CACHE = namedtuple('dns_cache', 'ttl records')
 CACHED_RECORD = namedtuple('cached_record', 'expire records top_domain')
+DNS_SERVERS = namedtuple('dns_server', 'primary secondary')
+
 
 # byte container
 RESOURCE_RECORD = ByteContainer('resource_record', 'name qtype qclass ttl data')

@@ -34,10 +34,10 @@ PUBLIC_SERVER_2 = '1.0.0.1'
 class DNSRelay:
     protocol = PROTO.TCP
     tls_up = True # assuming servers are up on startup
-    dns_servers = {
-        PUBLIC_SERVER_1: {'tls_up': True},
-        PUBLIC_SERVER_2: {'tls_up': True},
-    }
+    dns_servers = DNS_SERVERS(
+        {'ip': PUBLIC_SERVER_1, PROTO.TCP: True},
+        {'ip': PUBLIC_SERVER_2, PROTO.TCP: True}
+    )
     dns_records = {}
 
     _request_map = {}
