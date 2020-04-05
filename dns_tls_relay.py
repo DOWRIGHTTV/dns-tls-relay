@@ -245,7 +245,7 @@ class DNSCache(dict):
     # searching key directly will return calculated ttl and associated records
     def __getitem__(self, key):
         record = dict.__getitem__(self, key)
-        # expired or not present
+        # not present
         if (record == NOT_VALID):
             return DNS_CACHE(NOT_VALID, None)
 
@@ -253,8 +253,11 @@ class DNSCache(dict):
         if (calcd_ttl > DEFAULT_TTL):
             return DNS_CACHE(DEFAULT_TTL, record.records)
 
-        if (calcd_ttl > 0):
+        elif (calcd_ttl > 0):
             return DNS_CACHE(calcd_ttl, record.records)
+        # expired record
+        else:
+            return DNS_CACHE(NOT_VALID, None)
 
     # if missing will return an expired result
     def __missing__(self, key):
