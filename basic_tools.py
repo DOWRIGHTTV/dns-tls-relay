@@ -78,6 +78,12 @@ def create_dns_query_header(dns_id, arc=0, *, cd):
     return dns_header_pack(dns_id, f, 1, 0, 0, arc)
 
 def load_cache(filename):
+    if (not isinstance, filename, str):
+        raise TypeError('cache file must be a string.')
+
+    if (not filename.endswith('.json')):
+        filename += '.json'
+
     try:
         with open(filename, 'r') as settings:
             cache = json.load(settings)
