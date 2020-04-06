@@ -8,18 +8,21 @@ import random
 import ssl
 import socket
 import select
+import argparse
+from sys import argv
 
 from copy import deepcopy
 from collections import deque, Counter
 
 import basic_tools as tools
 from basic_tools import Log
+from advanced_tools import DNXQueue
 from dns_tls_constants import * # pylint: disable=unused-wildcard-import
 from dns_tls_protocols import TLSRelay
 from dns_tls_packets import ClientRequest, ServerResponse
 
 # toggle verbose command line outputs regarding application operation
-VERBOSE = False
+VERBOSE = True
 
 # addresses which the relay will receive dns requests
 LISTENING_ADDRESSES = (
@@ -34,6 +37,7 @@ PUBLIC_SERVER_2 = '1.0.0.1'
 class DNSRelay:
     protocol = PROTO.TCP
     tls_up = True # assuming servers are up on startup
+    queue = DNXQueue(Log)
     dns_servers = DNS_SERVERS(
         {'ip': PUBLIC_SERVER_1, PROTO.TCP: True},
         {'ip': PUBLIC_SERVER_2, PROTO.TCP: True}
@@ -42,7 +46,6 @@ class DNSRelay:
 
     _request_map = {}
     _records_cache = None
-    _response_q = deque()
     _id_lock = threading.Lock()
 
     # dynamic inheritance reference
@@ -53,7 +56,7 @@ class DNSRelay:
         if (self.is_service_loop):
             self._epoll = select.epoll()
             self._registered_socks = {}
-            threading.Thread(target=self._responder).start()
+            threading.Thread(target=self._responder, args=(self,)).start()
 
     @classmethod
     def run(cls):
@@ -127,7 +130,7 @@ class DNSRelay:
 
         client_query.generate_dns_query(new_dns_id, cls.protocol)
 
-        TLSRelay.add_to_queue(client_query)
+        TLSRelay.queue.add(client_query)
 
     @classmethod
     # NOTE: maybe put a sleep on iteration, use a for loop?
@@ -141,11 +144,9 @@ class DNSRelay:
 
                 return dns_id
 
-    @tools.dyn_looper
-    def _responder(self):
-        if (not self._response_q): return MSEC
-
-        server_response = ServerResponse(self._response_q.popleft())
+    @queue
+    def _responder(self, server_response):
+        server_response = ServerResponse(server_response)
         try:
             server_response.parse()
         except Exception:
@@ -169,10 +170,10 @@ class DNSRelay:
         except OSError:
             pass # socket will persist through errors.
 
-    @classmethod
-    def add_to_queue(cls, complete_query_response):
-        '''add server response to responder job queue.'''
-        cls._response_q.append(complete_query_response)
+    # @classmethod
+    # def add_to_queue(cls, complete_query_response):
+    #     '''add server response to responder job queue.'''
+    #     cls._response_q.add(complete_query_response)
 
     @property
     def listener_sock(self):
@@ -322,7 +323,31 @@ class DNSCache(dict):
         self.__dom_counter = Counter({domain: count for count, domain in enumerate(temp_dict)})
 
 if __name__ == '__main__':
-    if os.getuid():
+    parser = argparse.ArgumentParser(description = 'Privacy proxy which converts DNS/UDP to TLS + local record caching.')
+    parser.add_argument('-v', '--verbose', help='prints output to screen', action='store_true')
+    parser.add_argument('-I', '--ip-addrs', help='comma separated ips to listen on', required=True)
+    parser.add_argument('-S', '--servers', help='comma separated ips of public DoT resolvers')
+
+    args = parser.parse_args(argv[1:])
+
+    VERBOSE = args.verbose
+    l_addrs = args.ip_addrs
+    servers = args.servers
+
+    LISTENING_ADDRESSES = tuple(l_addrs.split(','))
+    ip_validation = copy(LISTENING_ADDRESSES)
+    if servers:
+        ip_validation.append(servers.split(''))
+    for addr in LISTENING_ADDRESSES:
+        try:
+            IPv4Address(addr)
+        except:
+            raise ValueError(f'argument {addr} is an invalid ip address.')
+
+    print(VERBOSE, LISTENING_ADDRESSES)
+
+    disabled = True
+    if os.getuid() or disabled:
         raise RuntimeError('DNS over TLS Relay must be ran as root.')
     Log.setup(verbose=VERBOSE)
 

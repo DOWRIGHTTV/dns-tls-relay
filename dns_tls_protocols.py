@@ -9,6 +9,7 @@ from collections import deque
 
 import basic_tools as tools
 from basic_tools import Log
+from advanced_tools import DNXQueue
 from dns_tls_constants import * # pylint: disable=unused-wildcard-import
 from dns_tls_packets import ClientRequest
 
@@ -17,8 +18,9 @@ class _ProtoRelay:
     '''parent class for udp and tls relays providing standard built in methods to start, check status, or add
     jobs to the work queue.'''
     _protocol  = PROTO.NOT_SET
-    _dns_queue = None
+    queue = DNXQueue(Log)
 
+    __run = False
     __slots__ = (
         # callbacks
         'DNSRelay', '_fallback',
@@ -26,6 +28,8 @@ class _ProtoRelay:
         # protected vars
         '_relay_conn', '_send_cnt', '_last_sent'
     )
+    # if (_dns_queue is None):
+    #     raise NotImplementedError('_dns_queue must be overridden in subclass.')
 
     def __new__(cls, *args, **kwargs):
         if (cls is _ProtoRelay):
@@ -39,7 +43,7 @@ class _ProtoRelay:
         May be expanded.
 
         '''
-        if (self._dns_queue is None):
+        if (self.__run is False):
             raise TypeError(f'{self.__class__.__name__} must be started through run class method.')
 
         Log.console(f'INITIALIZING: {self.__class__.__name__}')
@@ -51,33 +55,29 @@ class _ProtoRelay:
         self._last_sent = 0
 
         threading.Thread(target=self.__fail_detection).start()
-        threading.Thread(target=self.__queue_handler).start()
+        threading.Thread(target=self.__queue_handler, args=(self,)).start()
 
     @classmethod
     def run(cls, DNSRelay):
         '''starts the protocol relay. DNSRelay object is the class handling client side requests which
         we can call back to. all internal process will be called as threads then will return.'''
-        cls._dns_queue = deque()
+        cls.__run = True
+
         cls(DNSRelay)
 
-    @classmethod
-    def add_to_queue(cls, client_query):
-        '''add query to protocol specific dns queue.'''
-        cls._dns_queue.append(client_query)
+    # @classmethod
+    # def add_to_queue(cls, client_query):
+    #     '''add query to protocol specific dns queue.'''
+    #     cls._dns_queue.add(client_query)
 
-    @tools.dyn_looper
-    def __queue_handler(self):
+    @queue
+    def __queue_handler(self, client_query):
         '''main relay process for handling the relay queue. will block and run forever.
 
         May be overridden.
 
         '''
-        try:
-            client_query = self._dns_queue.popleft()
-        except IndexError:
-            return MSEC
-        else:
-            self.__send_query(client_query)
+        self.__send_query(client_query)
 
     def __send_query(self, client_query):
         for attempt in range(2):
@@ -148,7 +148,6 @@ class _ProtoRelay:
 class TLSRelay(_ProtoRelay):
     _protocol   = PROTO.TCP
     _keepalives = KEEPALIVES_ENABLED
-
     _dns_packet = ClientRequest.generate_keepalive
 
     __slots__ = (
@@ -202,7 +201,7 @@ class TLSRelay(_ProtoRelay):
                     else: break
 
                     if not self.is_keepalive(current_data):
-                        self.DNSRelay.add_to_queue(current_data[:data_len])
+                        self.DNSRelay.queue.add(current_data[:data_len])
 
         self._relay_conn.sock.close()
 
@@ -230,7 +229,7 @@ class TLSRelay(_ProtoRelay):
     def _tls_keepalive(self):
         if (not self._keepalives): return
 
-        self.add_to_queue(self._dns_packet(KEEP_ALIVE_DOMAIN, self._protocol))
+        self.queue.add(self._dns_packet(KEEP_ALIVE_DOMAIN, self._protocol))
 
     def _create_tls_context(self):
         self._tls_context = ssl.create_default_context()
