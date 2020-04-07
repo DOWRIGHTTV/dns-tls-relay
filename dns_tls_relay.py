@@ -9,10 +9,11 @@ import ssl
 import socket
 import select
 import argparse
-from sys import argv
 
-from copy import deepcopy
+from sys import argv
+from copy import copy
 from collections import deque, Counter
+from ipaddress import IPv4Address
 
 import basic_tools as tools
 from basic_tools import Log
@@ -30,8 +31,8 @@ LISTENING_ADDRESSES = (
 )
 
 # must support DNS over TLS (not https/443, tcp/853)
-PUBLIC_SERVER_1 = '1.1.1.1'
-PUBLIC_SERVER_2 = '1.0.0.1'
+DEFAULT_SERVER_1 = '1.1.1.1'
+DEFAULT_SERVER_2 = '1.0.0.1'
 
 
 class DNSRelay:
@@ -39,8 +40,8 @@ class DNSRelay:
     tls_up = True # assuming servers are up on startup
     queue = DNXQueue(Log)
     dns_servers = DNS_SERVERS(
-        {'ip': PUBLIC_SERVER_1, PROTO.TCP: True},
-        {'ip': PUBLIC_SERVER_2, PROTO.TCP: True}
+        {'ip': DEFAULT_SERVER_1, PROTO.TCP: True},
+        {'ip': DEFAULT_SERVER_2, PROTO.TCP: True}
     )
     dns_records = {}
 
@@ -150,7 +151,7 @@ class DNSRelay:
         try:
             server_response.parse()
         except Exception:
-            traceback.print_exc()
+            raise
         else:
             client_query = self._request_map.pop(server_response.dns_id, None)
             if (not client_query): return
@@ -322,6 +323,22 @@ class DNSCache(dict):
         temp_dict = reversed(list(self.__top_domains))
         self.__dom_counter = Counter({domain: count for count, domain in enumerate(temp_dict)})
 
+def argument_validation():
+    ip_validation = list(LISTENING_ADDRESSES)
+    if (SERVERS):
+        servers_l = SERVERS.split(',')
+        if (len(servers_l) != 2):
+            raise ValueError('2 public resolvers must be specified if the server argument is used.')
+        DNSRelay.dns_servers.primary['ip']   = servers_l[0]
+        DNSRelay.dns_servers.secondary['ip'] = servers_l[1]
+        ip_validation.extend(servers_l)
+
+    for addr in ip_validation:
+        try:
+            IPv4Address(addr)
+        except:
+            raise ValueError(f'argument {addr} is an invalid ip address.')
+
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description = 'Privacy proxy which converts DNS/UDP to TLS + local record caching.')
     parser.add_argument('-v', '--verbose', help='prints output to screen', action='store_true')
@@ -332,21 +349,16 @@ if __name__ == '__main__':
 
     VERBOSE = args.verbose
     l_addrs = args.ip_addrs
-    servers = args.servers
+    SERVERS = args.servers
 
     LISTENING_ADDRESSES = tuple(l_addrs.split(','))
-    ip_validation = copy(LISTENING_ADDRESSES)
-    if servers:
-        ip_validation.append(servers.split(''))
-    for addr in LISTENING_ADDRESSES:
-        try:
-            IPv4Address(addr)
-        except:
-            raise ValueError(f'argument {addr} is an invalid ip address.')
+    try:
+        argument_validation()
+    except Exception as E:
+        print(E)
+        os._exit(1)
 
-    print(VERBOSE, LISTENING_ADDRESSES)
-
-    disabled = True
+    disabled = False
     if os.getuid() or disabled:
         raise RuntimeError('DNS over TLS Relay must be ran as root.')
     Log.setup(verbose=VERBOSE)

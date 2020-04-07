@@ -1,5 +1,7 @@
 {
-    "top_domains": {},
+    "top_domains": {
+        "google.com": 1
+    },
     "filter": [
         "-",
         "test",
