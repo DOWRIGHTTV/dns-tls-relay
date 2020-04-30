@@ -1,13 +1,11 @@
 #!/usr/bin/env python3
 
-import struct
 import traceback
 
-from socket import inet_aton
+from collections import namedtuple
 
-import basic_tools as tools
 from dns_tls_constants import * # pylint: disable=unused-wildcard-import
-
+from basic_tools import * # pylint: disable=unused-wildcard-import
 
 class ClientRequest:
     __slots__ = (
@@ -73,19 +71,23 @@ class ClientRequest:
         self.rc = dns_header[1]       & 15
 
     def _parse_dns_query(self):
-        self.request, offset = tools.parse_query_name(self._dns_query, qname=True) # www.micro.com or micro.com || sd.micro.com
-        if ('.' not in self.request or self.request.endswith('.local')):
+        dns_query = self._dns_query
+
+        request, offset = parse_query_name(dns_query, qname=True) # www.micro.com or micro.com || sd.micro.com
+        if ('.' not in request or request.endswith('.local')):
             self.dom_local = True
 
-        self.qtype, self.qclass = double_short_unpack(self._dns_query[offset:])
-        self.question_record = self._dns_query[:offset+4] # ofsset + 4 byte info
-        self.additional_data = self._dns_query[offset+4:]
+        self.request = request
+
+        self.qtype, self.qclass = double_short_unpack(dns_query[offset:])
+        self.question_record = dns_query[:offset+4] # ofsset + 4 byte info
+        self.additional_data = dns_query[offset+4:]
 
     def generate_cached_response(self, cached_dom):
         if (self.send_data):
             raise RuntimeWarning('send data has already been created for this query.')
 
-        send_data = [tools.create_dns_response_header(
+        send_data = [create_dns_response_header(
             self.dns_id, len(cached_dom.records), rd=self.rd, cd=self.cd
         )]
         send_data.append(self.question_record)
@@ -102,8 +104,8 @@ class ClientRequest:
         # if additional data seen after question record, will mark additional record count as 1 in dns header
         if (self.additional_data):
             self.arc = 1
-        send_data = [b'\x00\x00', tools.create_dns_query_header(dns_id, self.arc, cd=self.cd)]
-        send_data.append(tools.convert_dns_string_to_bytes(self.request))
+        send_data = [b'\x00\x00', create_dns_query_header(dns_id, self.arc, cd=self.cd)]
+        send_data.append(convert_dns_string_to_bytes(self.request))
         send_data.append(double_short_pack(self.qtype, 1))
         send_data.append(self.additional_data)
 
@@ -127,8 +129,9 @@ class ClientRequest:
 
     @classmethod
     def generate_keepalive(cls, request, protocol, cd=1):
-        '''alternate construct for creating locally generated keep alive queries.'''
+        '''alternate constructor for creating locally generated keep alive queries.'''
         self = cls(None, NULL_ADDR, None)
+
         # harcorded qtype can change if needed.
         self.request   = request
         self.qtype     = 1
@@ -138,17 +141,20 @@ class ClientRequest:
 
         return self
 
+# used for creating record data set in server response constructor
+_records = namedtuple('records', 'resource authority')
+
 
 class ServerResponse:
     __slots__ = (
         '_data', '_dns_header', '_dns_query',
-        '_offset', '_a_rec_count',
+        '_offset',
 
         'dns_id', 'dns_flags', 'question_count',
         'records', 'additional_count',
 
         'qtype', 'qclass', 'question_record',
-        'resource_record', 'cache_ttl', 'is_valid',
+        'resource_record', 'data_to_cache',
         'send_data'
     )
 
@@ -156,22 +162,14 @@ class ServerResponse:
         self._data       = data
         self._dns_header = data[:12]
         self._dns_query  = data[12:]
-        self.dns_id      = 0
-        self.cache_ttl   = 0
-        self.send_data   = b''
 
-        self._offset      = 0
-        self._a_rec_count = 0
-        self.records      = {
-            'resource': {
-                'rcv_count': 0,
-                'records': []
-            },
-            'authority': {
-                'rcv_count': 0,
-                'records': []
-                }
-            }
+        self.data_to_cache = None
+        self.dns_id    = 0
+        self.send_data = b''
+        self.records   = _records(
+            {'rcv_count': 0, 'records': []},
+            {'rcv_count': 0, 'records': []}
+        )
 
     def parse(self):
         self._header()
@@ -180,41 +178,51 @@ class ServerResponse:
 
     def _header(self):
         dns_header = dns_header_unpack(self._dns_header)
-        self.dns_id           = dns_header[0]
-        self.dns_flags        = dns_header[1]
-        self.question_count   = dns_header[2]
-        self.records['resource']['rcv_count']  = dns_header[3]
-        self.records['authority']['rcv_count'] = dns_header[4]
+        self.dns_id         = dns_header[0]
+        self.dns_flags      = dns_header[1]
+        self.question_count = dns_header[2]
+        self.records.resource['rcv_count']  = dns_header[3]
+        self.records.authority['rcv_count'] = dns_header[4]
         self.additional_count = dns_header[5]
 
     def _question_record_handler(self):
-        offset = tools.parse_query_name(self._dns_query) # www.micro.com or micro.com || sd.micro.com
+        dns_query = self._dns_query
 
-        self.qtype, self.qclass = double_short_unpack(self._dns_query[offset:])
-        self.question_record = self._dns_query[:offset+4] # ofsset + 4 byte info
-        self.resource_record = self._dns_query[offset+4:]
+        offset = parse_query_name(dns_query) # www.micro.com or micro.com || sd.micro.com
+
+        self.qtype, self.qclass = double_short_unpack(dns_query[offset:])
+        self.question_record = dns_query[:offset+4] # ofsset + 4 byte info
+        self.resource_record = dns_query[offset+4:]
 
     # grabbing the records contained in the packet and appending them to their designated lists to be inspected by other methods.
     # count of records is being grabbed/used from the header information
     def _resource_record_handler(self):
+        a_record_count, offset = 0, 0
         # parsing standard and authority records
-        for info in self.records.values():
-            for _ in range(info['rcv_count']):
-                record = self._parse_resource_record()
-                # incrementing a record counter to limit amount of records in response/held in cache to configured ammount
-                if (record.qtype[1] == DNS.AR):
-                    self._a_rec_count += 1
-                    if (self._a_rec_count > MAX_A_RECORD_COUNT): continue
+        for r_field in self.records:
 
-                info['records'].append(record)
+            # iterating once for every record based on count sent. if this number is forged/tampered with
+            # it will cause the parsing to fail. NOTE: ensure this isnt fatal
+            for _ in range(r_field['rcv_count']):
+                record_type, record, offset = self._parse_resource_record(offset)
 
-        self.is_valid = bool(self.records['resource']['records'])
+                # incrementing a record counter to limit amount of records in response
+                if (record_type == DNS.AR):
+                    a_record_count += 1
+
+                # filtering out a records once max count is reached
+                if (a_record_count <= MAX_A_RECORD_COUNT or record_type != DNS.AR):
+                    r_field['records'].append(record)
+
+        # instance assignment to be used by response generation method
+        if (offset):
+            self._offset = offset
 
     # creating byte container of dns record values to be used later. now rewriting ttl here.
-    def _parse_resource_record(self):
-        local_record = self.resource_record[self._offset:]
+    def _parse_resource_record(self, total_offset):
+        local_record = self.resource_record[total_offset:]
 
-        offset = tools.parse_query_name(local_record, self._dns_query)
+        offset = parse_query_name(local_record, self._dns_query)
         name   = local_record[:offset]
         qtype  = local_record[offset:offset+2]
         qclass = local_record[offset+2:offset+4]
@@ -222,16 +230,24 @@ class ServerResponse:
         dt_len = short_unpack(local_record[offset+8:offset+10])[0]
         data   = local_record[offset+8:offset+10+dt_len]
 
-        self._offset += offset + dt_len + 10 # length of data + 2 bytes(length field) + 8 bytes(type, class, ttl)
+        total_offset += offset + dt_len + 10 # length of data + 2 bytes(length field) + 8 bytes(type, class, ttl)
 
-        return RESOURCE_RECORD(name, qtype, qclass, ttl, data)
+        return short_unpack(qtype)[0], RESOURCE_RECORD(name, qtype, qclass, ttl, data), total_offset
 
     def generate_server_response(self, dns_id):
-        send_data = [b'\x00'*14, self.question_record]
-        for r_type, info in self.records.items():
-            for record in info['records']:
-                record.update('ttl', self._get_new_ttl(r_type, record.ttl))
+        send_data, original_ttl = [b'\x00'*14, self.question_record], 0
+        for i, r_field in enumerate(self.records):
+            for record in r_field['records']:
+                original_ttl, modified_ttl, modified_ttl_packed = self._get_new_ttl(record.ttl)
+                record.update('ttl', modified_ttl_packed)
                 send_data.append(b''.join(record))
+
+            # first enum iter filter(resource records) and ensuring its an a type, then creating cache data.
+            if (not i and original_ttl):
+                self.data_to_cache = CACHED_RECORD(
+                    int(fast_time()) + modified_ttl,
+                    modified_ttl, r_field['records']
+                )
 
         # prepending dns header to records. this is so we have new count calculated before header creation.
         send_data[0] = self._create_header(dns_id)
@@ -242,7 +258,8 @@ class ServerResponse:
 
         self.send_data = b''.join(send_data)
 
-    def _get_new_ttl(self, r_type, record_ttl):
+    def _get_new_ttl(self, record_ttl):
+        '''returns dns records original ttl, the rewritten ttl, and the packed for of the rewritten ttl.'''
         record_ttl = long_unpack(record_ttl)[0]
         if (record_ttl < MINIMUM_TTL):
             new_record_ttl = MINIMUM_TTL
@@ -253,17 +270,13 @@ class ServerResponse:
         else:
             new_record_ttl = record_ttl
 
-        # if its a resource record and the ttl is greater than what is marked currently as cache length
-        # the cache ttl will be updated. this will change on first record, or for highest ttl if they are different.
-        if (r_type == 'resource' and new_record_ttl > self.cache_ttl):
-            self.cache_ttl = new_record_ttl
-
-        return long_pack(new_record_ttl)
+        return record_ttl, new_record_ttl, long_pack(new_record_ttl)
 
     def _create_header(self, dns_id):
         return dns_header_pack(
             dns_id, self.dns_flags,
             self.question_count,
-            len(self.records['resource']['records']),
-            len(self.records['authority']['records']),
-            self.additional_count)
+            len(self.records.resource['records']),
+            len(self.records.authority['records']),
+            self.additional_count
+        )

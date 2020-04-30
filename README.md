@@ -1,31 +1,32 @@
 # DNS-over-TLS-Relay
 stripped down dns relay (UDP > TCP/TLS) (privacy proxy)
 
-TO USE:
+<code>
+usage: run_relay.py [-h] [--version] [-v] [-i IP_ADDRS] [-s SERVERS]
 
-CHANGE (in dns_tls_relay.py):
+Privacy proxy which converts DNS/UDP to TLS + local record caching.
 
-LISTENING_ADDRESS > local address on device. if using a system like pi-hole, this should be 127.0.0.1
-CLIENT_ADDRESS > local address on device with internet access
+optional arguments:
 
-By default the Public DNS Resolvers are set to CloudFlare. If you want to change, ensure the servers support
-DNS over TLS and are listening on ports TCP 853.
-PUBLIC_SERVER_1 = '1.1.1.1'
-PUBLIC_SERVER_2 = '1.0.0.1'
+  -h, --help                        show this help message and exit
 
-NOTES:
-DNS over TLS time to resolve is anywhere from 3-5 times slower than standard UDP.
-Depending on the version of linux will depend on which TLS version is used. For example Ubuntu 19.04 contains
-    the openssl version to support TLS 1.3. TLS 1.3 is preferred because even the ssl certificate is encrypted.
+  --version                         show program's version number and exit
+
+  -v, --verbose                     prints output to screen
+
+  -i IP_ADDRS, --ip-addrs IP_ADDRS  comma separated ips to listen on
+
+  -s SERVERS, --servers SERVERS     comma separated ips of public DoT resolvers
+</code>
+
+Must be ran as root. listener interface defaults to loopback ip/127.0.0.1.
+
+By default the public DNS Resolvers are set to CloudFlare. If you want to change, ensure the servers support DNS over TLS and are listening on ports TCP 853.
+
+DNS over TLS time to resolve is anywhere from 3-5 times slower than standard UDP if a connection
+to the remote resolver has not already been established or has timed out. The length in which the
+remote end waits before closing depends on the resolvers used. Depending on the version of linux may dictate which TLS version is used. For example Ubuntu 19.04 contains the openssl version to support TLS 1.3. TLS 1.3 is preferred because the server certificate exchange is encrypted (this will have VERY minimal benefit with DoT) and some performance improvements to the protocol have been included
 
 Local Caching:
-All records will be cached for a minimum of 5 minutes to improve performance.
-The mose requested domains on your network will be permanently cached (checked every 5 minutes) to ensure you will
-    always receive a cached response for these domains. (the system will ensure the records are up to date in the background)
 
-
-TO RUN:
-navigate to the folder where the files are located.
-run the following command
-
-sudo python3 dns_tls_relay.py (priveleged port in use so admin rights are required)
+All records will be cached for a minimum of 5 minutes to improve lan efficiency and reduce chatter over the WAN. The mose requested domains on your network will be permanently cached (updated records retreived every 3 minutes) to ensure you will always receive a cached response for these domains.

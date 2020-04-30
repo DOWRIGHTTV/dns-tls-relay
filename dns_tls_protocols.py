@@ -9,7 +9,7 @@ from collections import deque
 
 import basic_tools as tools
 from basic_tools import Log
-from advanced_tools import DNXQueue
+from advanced_tools import relay_queue
 from dns_tls_constants import * # pylint: disable=unused-wildcard-import
 from dns_tls_packets import ClientRequest
 
@@ -18,7 +18,6 @@ class _ProtoRelay:
     '''parent class for udp and tls relays providing standard built in methods to start, check status, or add
     jobs to the work queue.'''
     _protocol  = PROTO.NOT_SET
-    queue = DNXQueue(Log)
 
     __run = False
     __slots__ = (
@@ -28,8 +27,6 @@ class _ProtoRelay:
         # protected vars
         '_relay_conn', '_send_cnt', '_last_sent'
     )
-    # if (_dns_queue is None):
-    #     raise NotImplementedError('_dns_queue must be overridden in subclass.')
 
     def __new__(cls, *args, **kwargs):
         if (cls is _ProtoRelay):
@@ -55,7 +52,7 @@ class _ProtoRelay:
         self._last_sent = 0
 
         threading.Thread(target=self.__fail_detection).start()
-        threading.Thread(target=self.__queue_handler, args=(self,)).start()
+        threading.Thread(target=self.relay).start()
 
     @classmethod
     def run(cls, DNSRelay):
@@ -65,13 +62,8 @@ class _ProtoRelay:
 
         cls(DNSRelay)
 
-    # @classmethod
-    # def add_to_queue(cls, client_query):
-    #     '''add query to protocol specific dns queue.'''
-    #     cls._dns_queue.add(client_query)
-
-    @queue
-    def __queue_handler(self, client_query):
+    @relay_queue(Log, name='TLSRelay')
+    def relay(self, client_query):
         '''main relay process for handling the relay queue. will block and run forever.
 
         May be overridden.
@@ -104,12 +96,12 @@ class _ProtoRelay:
 
     @tools.looper(FIVE_SEC)
     def __fail_detection(self):
-        now = time.time()
-        Log.p(f'NOTICE: fail detection | now={now}, last_sent={self._last_sent}, send_count={self._send_cnt}')
-        if (now - self._last_sent >= FIVE_SEC
+        if (fast_time() - self._last_sent >= FIVE_SEC
                 and self._send_cnt >= HEARTBEAT_FAIL_LIMIT):
 
             self.mark_server_down()
+
+        Log.p(f'NOTICE: fail detection | now={fast_time()}, last_sent={self._last_sent}, send_count={self._send_cnt}')
 
     def mark_server_down(self):
         if (self.socket_available):
@@ -123,13 +115,9 @@ class _ProtoRelay:
     def _reset_fail_detection(self):
         self._send_cnt = 0
 
-#        Log.p(f'reset fail detection | count={self._send_cnt}')
-
     def _increment_fail_detection(self):
         self._send_cnt += 1
         self._last_sent = time.time()
-
-#        Log.p(f'NOTICE: fail detection | count={self._send_cnt}, last_seen={self._last_sent}')
 
     @property
     def socket_available(self):
@@ -155,9 +143,10 @@ class TLSRelay(_ProtoRelay):
     )
 
     def __init__(self, *args, **kwargs):
+        self._create_tls_context()
+
         super().__init__(*args, **kwargs)
 
-        self._create_tls_context()
         threading.Thread(target=self._tls_keepalive).start()
         threading.Thread(target=Reachability.run, args=(self.DNSRelay,)).start()
 
@@ -196,23 +185,21 @@ class TLSRelay(_ProtoRelay):
                     data_len = short_unpackf(recv_buffer[0])[0]
                     if (len(current_data) == data_len):
                         recv_buffer = []
+
                     elif (len(current_data) > data_len):
                         recv_buffer = [current_data[data_len:]]
+
                     else: break
 
                     if not self.is_keepalive(current_data):
-                        self.DNSRelay.queue.add(current_data[:data_len])
+                        self.DNSRelay.responder.add(current_data[:data_len])
 
         self._relay_conn.sock.close()
 
-#    @profiler
     def _tls_connect(self, secure_server):
         Log.p(f'Opening Secure socket to {secure_server}: 853')
+
         sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        # NOTE: this should improve sending performance since we expect a dns record to only be a small
-        # portion of available bytes in MTU/max bytes(1500). seems to provide no improvement after 1 run.
-        # there could be other bottlenecks in play so we can re evaluate later.
-        # sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
         dns_sock = self._tls_context.wrap_socket(sock, server_hostname=secure_server)
         try:
             dns_sock.connect((secure_server, PROTO.DNS_TLS))
@@ -229,7 +216,7 @@ class TLSRelay(_ProtoRelay):
     def _tls_keepalive(self):
         if (not self._keepalives): return
 
-        self.queue.add(self._dns_packet(KEEP_ALIVE_DOMAIN, self._protocol))
+        self.relay.add(self._dns_packet(KEEP_ALIVE_DOMAIN, self._protocol))
 
     def _create_tls_context(self):
         self._tls_context = ssl.create_default_context()
@@ -274,6 +261,7 @@ class Reachability:
     def _tls_reachable(self, secure_server):
         sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         sock.settimeout(3)
+
         secure_socket = self._tls_context.wrap_socket(sock, server_hostname=secure_server)
         try:
             secure_socket.connect((secure_server, PROTO.DNS_TLS))

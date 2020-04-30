@@ -1,11 +1,15 @@
 #!/usr/bin/env python3
 
-from struct import Struct
-from enum import IntEnum
-from collections import namedtuple
+import time as _time
 
-from advanced_tools import ByteContainer
+from struct import Struct as _Struct
+from enum import IntEnum as _IntEnum
+from collections import namedtuple as _namedtuple
 
+from advanced_tools import ByteContainer as _ByteContainer
+
+fast_time = _time.time
+fast_sleep = _time.sleep
 
 KEEPALIVES_ENABLED = False
 
@@ -32,42 +36,41 @@ FIVE_MIN = 300
 KEEPALIVE_INTERVAL = 8
 
 # namedtuples
-RELAY_CONN = namedtuple('relay_conn', 'remote_ip sock')
-DNS_CACHE = namedtuple('dns_cache', 'ttl records')
-CACHED_RECORD = namedtuple('cached_record', 'expire records top_domain')
-DNS_SERVERS = namedtuple('dns_server', 'primary secondary')
-
+RELAY_CONN = _namedtuple('relay_conn', 'remote_ip sock')
+DNS_CACHE  = _namedtuple('dns_cache', 'ttl records')
+DNS_SERVERS = _namedtuple('dns_server', 'primary secondary')
+CACHED_RECORD = _namedtuple('cached_record', 'expire ttl records')
 
 # byte container
-RESOURCE_RECORD = ByteContainer('resource_record', 'name qtype qclass ttl data')
+RESOURCE_RECORD = _ByteContainer('resource_record', 'name qtype qclass ttl data')
 
 # COMPILED STRUCTS
-dns_header_unpack = Struct('!6H').unpack
-dns_header_pack   = Struct('!6H').pack
+dns_header_unpack = _Struct('!6H').unpack
+dns_header_pack   = _Struct('!6H').pack
 
-resource_record_pack = Struct('!3HLH4s').pack
+resource_record_pack = _Struct('!3HLH4s').pack
 
-short_unpackf = Struct('!H').unpack_from
+short_unpackf = _Struct('!H').unpack_from
 
-byte_pack = Struct('!B').pack
-short_unpack = Struct('!H').unpack
-short_pack   = Struct('!H').pack
-long_pack    = Struct('!L').pack
-long_unpack  = Struct('!L').unpack
+byte_pack = _Struct('!B').pack
+short_unpack = _Struct('!H').unpack
+short_pack   = _Struct('!H').pack
+long_pack    = _Struct('!L').pack
+long_unpack  = _Struct('!L').unpack
 
-double_short_unpack = Struct('!2H').unpack_from
-double_short_pack   = Struct('!2H').pack
+double_short_unpack = _Struct('!2H').unpack_from
+double_short_pack   = _Struct('!2H').pack
 
 
 # enums
-class PROTO(IntEnum):
+class PROTO(_IntEnum):
     NOT_SET = 0
     TCP = 6
     DNS = 53
     DNS_TLS = 853
 
 
-class DNS(IntEnum):
+class DNS(_IntEnum):
     ROOT = 0
     AR = 1
     NS = 2

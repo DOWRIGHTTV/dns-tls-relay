@@ -2,14 +2,18 @@
 
 import time
 import threading
+import traceback
 
 from copy import copy
 from collections import deque
+
+fast_sleep = time.sleep
 
 
 class ByteContainer:
     '''named tuple like class for storing raw byte sections with named fields. calling
     len on the container will return sum of all bytes stored not amount of fields.'''
+
     __slots__ = (
         '_obj_name', '_field_names', '_byte_len',
         '__dict__' # needed due to variable field names.
@@ -39,6 +43,7 @@ class ByteContainer:
         for name, value in zip(self._field_names, args):
             if (not isinstance(value, bytes)):
                 raise TypeError('this container can only hold raw bytes.')
+
             new_container._byte_len += len(value)
             setattr(new_container, name, value)
 
@@ -65,55 +70,52 @@ class ByteContainer:
         self._byte_len += len(new_value)
 
 
-class DNXQueue:
-    '''small class to provide a custom queue mechanism for any queue handling functions. This
-    is a direct replacement for dyn_looper for queues. this is to be used as a decorator,
-    but it requires an active instance prior to decoration.
+def relay_queue(Log, name=None):
+    '''decorator to add custom queue mechanism for any queue handling functions. This
+    is a direct replacement for dynamic_looper for queues.
 
     example:
-        dnx_queue = DNXQueue(Log)
-
-        @dnx_queue
+        @dnx_queue(Log, name='Server')
         def some_func(job):
             process(job)
+
     '''
-    __slots__ = (
-        '_Log', '_queue', '_func', '_job_available'
-    )
+    def decorator(func):
 
-    def __init__(self, Log=None):
-        self._Log = Log
-        self._queue = deque()
+        queue = deque()
+        queue_add = queue.append
+        queue_get = queue.popleft
 
-        self._job_available = threading.Event()
+        job_available = threading.Event()
+        job_wait = job_available.wait
+        job_clear = job_available.clear
+        job_set = job_available.set
 
-    def __call__(self, func):
-        self._func = func
+        def wrapper(*args):
+            if (Log):
+                Log.p(f'{name}/relay_queue started.')
 
-        return self._looper
+            while True:
+                job_wait()
+                # clearing job notification
+                job_clear()
+                # processing all available jobs
+                while queue:
+                    job = queue_get()
+                    try:
+                        func(*args, job)
+                    except Exception as E:
+                        traceback.print_exc()
+                        if (Log):
+                            Log.p(f'error while processing a {name}/relay_queue started job. | {E}')
+                        fast_sleep(.001)
 
-    def _looper(self, instance):
-        '''waiting for job to become available. once available, the event will be reset
-        and the decorated function will be called with the return of queue pop as an
-        argument. runs forever.'''
-        if (self._Log):
-            self._Log.console(f'dnx queue handler started | {self.__class__.__name__}/{instance.__class__.__name__}')
+        def add(job):
+            '''adds job to work queue, then marks event indicating a job is available.'''
+            queue_add(job)
+            job_set()
 
-        while True:
-            self._job_available.wait()
-            self._job_available.clear()
+        wrapper.add = add
+        return wrapper
 
-            try:
-                job = self._queue.popleft()
-                self._func(instance, job)
-            except Exception as E:
-                if (self._Log):
-                    self._Log.console(f'error while trying processing task/job. | {E}')
-                time.sleep(.001)
-
-        return self._looper
-
-    def add(self, job):
-        '''adds job to work queue, then marks event indicating a job is available.'''
-        self._queue.append(job)
-        self._job_available.set()
+    return decorator
