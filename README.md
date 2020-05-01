@@ -1,23 +1,21 @@
 # DNS-over-TLS-Relay
 stripped down dns relay (UDP > TCP/TLS) (privacy proxy)
+ 
+    usage: run_relay.py [-h] [--version] [-v] [-i IP_ADDRS] [-s SERVERS]
 
-<code>
-usage: run_relay.py [-h] [--version] [-v] [-i IP_ADDRS] [-s SERVERS]
+    Privacy proxy which converts DNS/UDP to TLS + local record caching.
 
-Privacy proxy which converts DNS/UDP to TLS + local record caching.
+    optional arguments:
 
-optional arguments:
+      -h, --help                        show this help message and exit
 
-  -h, --help                        show this help message and exit
+      --version                         show program's version number and exit
 
-  --version                         show program's version number and exit
+      -v, --verbose                     prints output to screen
 
-  -v, --verbose                     prints output to screen
-
-  -i IP_ADDRS, --ip-addrs IP_ADDRS  comma separated ips to listen on
-
-  -s SERVERS, --servers SERVERS     comma separated ips of public DoT resolvers
-</code>
+      -i IP_ADDRS, --ip-addrs IP_ADDRS  comma separated ips to listen on
+  
+      -s SERVERS, --servers SERVERS     comma separated ips of public DoT resolvers
 
 Must be ran as root. listener interface defaults to loopback ip/127.0.0.1.
 
