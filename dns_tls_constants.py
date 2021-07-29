@@ -6,11 +6,13 @@ from struct import Struct as _Struct
 from enum import IntEnum as _IntEnum
 from collections import namedtuple as _namedtuple
 
-from advanced_tools import ByteContainer as _ByteContainer
-
 fast_time = _time.time
 fast_sleep = _time.sleep
 
+byte_join = b''.join
+
+RELAY_TIMEOUT = 10
+KEEPALIVE_INTERVAL = 8
 KEEPALIVES_ENABLED = False
 
 # general settings
@@ -33,18 +35,16 @@ THIRTY_SEC = 30
 THREE_MIN = 180
 FIVE_MIN = 300
 
-KEEPALIVE_INTERVAL = 8
-
 # namedtuples
-RELAY_CONN = _namedtuple('relay_conn', 'remote_ip sock')
+RELAY_CONN = _namedtuple('relay_conn', 'remote_ip sock send recv version')
 DNS_CACHE  = _namedtuple('dns_cache', 'ttl records')
-DNS_SERVERS = _namedtuple('dns_server', 'primary secondary')
 CACHED_RECORD = _namedtuple('cached_record', 'expire ttl records')
+DNS_SERVERS = _namedtuple('dns_server', 'primary secondary')
 
-# byte container
-RESOURCE_RECORD = _ByteContainer('resource_record', 'name qtype qclass ttl data')
+#SOCKET
+L_SOCK = _namedtuple('listener_socket', 'ip socket send sendto recvfrom')
 
-# COMPILED STRUCTS
+# COMPILED Structs
 dns_header_unpack = _Struct('!6H').unpack
 dns_header_pack   = _Struct('!6H').pack
 

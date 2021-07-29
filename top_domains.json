@@ -1,12 +1,5 @@
 {
-    "top_domains": {
-        "facebook.com": 1,
-        "amd.com": 2,
-        "apple.com": 3,
-        "intel.com": 4,
-        "wtf.com": 5,
-        "google.com": 6
-    },
+    "top_domains": {},
     "filter": [
         "-",
         "test",
@@ -24,6 +17,7 @@
         "http",
         "telemetry",
         "wpad",
+        "ssl",
         "0",
         "1",
         "2",

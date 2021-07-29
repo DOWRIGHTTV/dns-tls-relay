@@ -82,12 +82,12 @@ if __name__ == '__main__':
     try:
         argument_validation()
     except ValueError as E:
-        sys.stdout.err(E)
-        os._exit(1)
+        print(E)
+        sys.exit()
 
     if (os.getuid() or DISABLED):
-        sys.stdout.err('DNS over TLS Relay must be ran as root.')
-        os._exit(1)
+        print('DNS over TLS Relay must be ran as root.')
+        sys.exit()
 
 
     display_banner()
