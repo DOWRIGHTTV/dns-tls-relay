@@ -161,14 +161,17 @@ def relay_queue(Log, name=None):
             Log.console(f'{name}/relay_queue started.')
 
             while True:
+
                 job_wait()
+
                 # clearing job notification
                 job_clear()
+
                 # processing all available jobs
                 while queue:
+
                     job = queue_get()
                     try:
-                        print(*args, job)
                         # TODO: see if we should just send in the queue reference and perform the pop in the called func. if
                         # we do this we would probably want it to be optional and use a conditional set on start to identify.
                         func(*args, job)
