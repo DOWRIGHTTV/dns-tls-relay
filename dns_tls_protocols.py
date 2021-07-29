@@ -71,7 +71,7 @@ class ProtoRelay:
             else:
                 self._increment_fail_detection()
 
-                Log.console(f'[{self._relay_conn.remote_ip}/{self._relay_conn.version}][{attempt}] Sent {client_query.request}\n') # pylint: disable=no-member
+                Log.console(f'[{self._relay_conn.remote_ip}/{self._relay_conn.version}][{attempt}] Sent {client_query.request}') # pylint: disable=no-member
 
                 break
 
