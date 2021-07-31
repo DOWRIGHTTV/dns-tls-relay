@@ -5,45 +5,45 @@ import traceback
 from collections import namedtuple
 
 from dns_tls_constants import * # pylint: disable=unused-wildcard-import
-from basic_tools import * # pylint: disable=unused-wildcard-import
+from advanced_tools import bytecontainer
+from basic_tools import parse_query_name, create_dns_query_header, create_dns_response_header, convert_dns_string_to_bytes
+
 
 class ClientRequest:
     __slots__ = (
-        # protected vars
         '_data', '_dns_header', '_dns_query',
 
-        # public vars - init
-        'address', 'sock', 'intf', 'top_domain',
+        'address', 'sendto', 'intf', 'top_domain',
         'keepalive', 'dom_local', 'fallback',
         'dns_id', 'request', 'send_data',
-        'arc', 'additional_data',
+        '_arc', 'additional_data',
 
-        # public vars - dns
         'qr', 'op', 'aa', 'tc', 'rd',
         'ra', 'zz', 'ad', 'cd', 'rc',
 
         'requests', 'qtype', 'qclass', 'question_record'
     )
 
-    def __init__(self, data, address, sock):
+    def __init__(self, data, address, sock_info):
         self._data   = data
         self.address = address
-        self.sock = sock
         if (data):
             self._dns_header = data[:12]
             self._dns_query  = data[12:]
 
-        self.top_domain = False
+        if (sock_info):
+            self.sendto = sock_info.sendto
+
+        self.top_domain = False if address[0] else True
         self.keepalive  = False
         self.dom_local  = False
-        self.fallback   = False
 
         self.dns_id    = 1
         self.request   = None
         self.send_data = b''
 
         # OPT record defaults
-        self.arc = 0
+        self._arc = 0
         self.additional_data = b''
 
     def __str__(self):
@@ -71,17 +71,13 @@ class ClientRequest:
         self.rc = dns_header[1]       & 15
 
     def _parse_dns_query(self):
-        dns_query = self._dns_query
-
-        request, offset = parse_query_name(dns_query, qname=True) # www.micro.com or micro.com || sd.micro.com
-        if ('.' not in request or request.endswith('.local')):
+        self.request, offset = parse_query_name(self._dns_query, qname=True) # www.micro.com or micro.com || sd.micro.com
+        if ('.' not in self.request or self.request.endswith('.local')):
             self.dom_local = True
 
-        self.request = request
-
-        self.qtype, self.qclass = double_short_unpack(dns_query[offset:])
-        self.question_record = dns_query[:offset+4] # ofsset + 4 byte info
-        self.additional_data = dns_query[offset+4:]
+        self.qtype, self.qclass = double_short_unpack(self._dns_query[offset:])
+        self.question_record = self._dns_query[:offset+4] # ofsset + 4 byte info
+        self.additional_data = self._dns_query[offset+4:]
 
     def generate_cached_response(self, cached_dom):
         if (self.send_data):
@@ -103,8 +99,9 @@ class ClientRequest:
 
         # if additional data seen after question record, will mark additional record count as 1 in dns header
         if (self.additional_data):
-            self.arc = 1
-        send_data = [b'\x00\x00', create_dns_query_header(dns_id, self.arc, cd=self.cd)]
+            self._arc = 1
+
+        send_data = [b'\x00\x00', create_dns_query_header(dns_id, self._arc, cd=self.cd)]
         send_data.append(convert_dns_string_to_bytes(self.request))
         send_data.append(double_short_pack(self.qtype, 1))
         send_data.append(self.additional_data)
@@ -120,7 +117,6 @@ class ClientRequest:
 
         self = cls(None, NULL_ADDR, None)
         # harcorded qtype can change if needed.
-        self.top_domain = True
         self.request    = request
         self.qtype      = 1
         self.cd         = cd
@@ -129,9 +125,8 @@ class ClientRequest:
 
     @classmethod
     def generate_keepalive(cls, request, protocol, cd=1):
-        '''alternate constructor for creating locally generated keep alive queries.'''
+        '''alternate construct for creating locally generated keep alive queries.'''
         self = cls(None, NULL_ADDR, None)
-
         # harcorded qtype can change if needed.
         self.request   = request
         self.qtype     = 1
@@ -141,8 +136,8 @@ class ClientRequest:
 
         return self
 
-# used for creating record data set in server response constructor
 _records = namedtuple('records', 'resource authority')
+_RESOURCE_RECORD = bytecontainer('resource_record', 'name qtype qclass ttl data')
 
 
 class ServerResponse:
@@ -162,6 +157,7 @@ class ServerResponse:
         self._data       = data
         self._dns_header = data[:12]
         self._dns_query  = data[12:]
+        self._offset     = 0
 
         self.data_to_cache = None
         self.dns_id    = 0
@@ -198,6 +194,7 @@ class ServerResponse:
     # count of records is being grabbed/used from the header information
     def _resource_record_handler(self):
         a_record_count, offset = 0, 0
+
         # parsing standard and authority records
         for r_field in self.records:
 
@@ -215,8 +212,7 @@ class ServerResponse:
                     r_field['records'].append(record)
 
         # instance assignment to be used by response generation method
-        if (offset):
-            self._offset = offset
+        self._offset = offset
 
     # creating byte container of dns record values to be used later. now rewriting ttl here.
     def _parse_resource_record(self, total_offset):
@@ -232,40 +228,47 @@ class ServerResponse:
 
         total_offset += offset + dt_len + 10 # length of data + 2 bytes(length field) + 8 bytes(type, class, ttl)
 
-        return short_unpack(qtype)[0], RESOURCE_RECORD(name, qtype, qclass, ttl, data), total_offset
+        return short_unpack(qtype)[0], _RESOURCE_RECORD(name, qtype, qclass, ttl, data), total_offset
 
     def generate_server_response(self, dns_id):
         send_data, original_ttl = [b'\x00'*14, self.question_record], 0
+
+        # parsing standard and authority records
         for i, r_field in enumerate(self.records):
+
+            # ttl rewrite to configured bounds (clamping)
             for record in r_field['records']:
                 original_ttl, modified_ttl, modified_ttl_packed = self._get_new_ttl(record.ttl)
                 record.update('ttl', modified_ttl_packed)
-                send_data.append(b''.join(record))
+                send_data.append(byte_join(record))
 
-            # first enum iter filter(resource records) and ensuring its an a type, then creating cache data.
+            # first enumerate iteration filter(resource records) and ensuring its an "A" record, then creating cache data.
+            # NOTE: system will cache for full ttl. the server will override to configured amount responding sending to client.
             if (not i and original_ttl):
                 self.data_to_cache = CACHED_RECORD(
-                    int(fast_time()) + modified_ttl,
-                    modified_ttl, r_field['records']
+                    int(fast_time()) + original_ttl,
+                    original_ttl, r_field['records']
                 )
 
-        # prepending dns header to records. this is so we have new count calculated before header creation.
+        # replacing dns head placeholder. needed new record counts calculated before header creation.
         send_data[0] = self._create_header(dns_id)
 
         # additional records will remain intact until otherwise needed
         if (self.additional_count):
             send_data.append(self.resource_record[self._offset:])
 
-        self.send_data = b''.join(send_data)
+        self.send_data = byte_join(send_data)
 
     def _get_new_ttl(self, record_ttl):
-        '''returns dns records original ttl, the rewritten ttl, and the packed for of the rewritten ttl.'''
+        '''returns dns records original ttl, the rewritten ttl, and the packed form of the rewritten ttl.'''
         record_ttl = long_unpack(record_ttl)[0]
         if (record_ttl < MINIMUM_TTL):
             new_record_ttl = MINIMUM_TTL
+
         # rewriting ttl to the remaining amount that was calculated from cached packet or to the maximum defined TTL
         elif (record_ttl > DEFAULT_TTL):
             new_record_ttl = DEFAULT_TTL
+
         # anything in between the min and max TTL will be retained
         else:
             new_record_ttl = record_ttl

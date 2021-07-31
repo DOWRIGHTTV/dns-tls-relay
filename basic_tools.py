@@ -1,9 +1,12 @@
 #!/usr/bin/env python3
 
-import sys
+import time
 import json
 
-from dns_tls_constants import short_unpack, byte_pack, dns_header_pack, fast_sleep
+from copy import copy
+from types import SimpleNamespace
+
+from dns_tls_constants import short_unpack, byte_pack, dns_header_pack
 
 def is_pointer(data):
     return True if 192 & data == 192 else False
@@ -21,29 +24,20 @@ def parse_query_name(data, dns_query=None, *, qname=False):
     query_name = []
     while True:
         length = data[0]
-        # length of 0 is a root entry (name stop byte)
         if (length == 0):
-
-            #if we have followed a pointer we will not adjust offset for data
             if (not pointer_present):
                 offset += 1
             break
-
-        # looking for a dns pointer. if detected the pointer will be followedS
+        # will break on pad or root name lookup
         if (is_pointer(length)):
             data = dns_query[calculate_pointer(data[:2]):]
-
-            # if this is the first pointer followed we will apply a 2 byte offset for pointer value
-            # then set the pointer present to true to ensure we do not add offset for subsequent pointers
             if (not pointer_present):
                 offset += 2
-
             pointer_present = True
             continue
 
-        # name len + interger value of initial length
         if (not pointer_present):
-            offset += length + 1
+            offset += length + 1 # name len + interger value of initial length
 
         query_name.append(data[1:1+length].decode())
         data = data[length+1:]
@@ -62,7 +56,6 @@ def convert_dns_string_to_bytes(domain_name):
     for part in split_domain:
         domain_bytes.append(byte_pack(len(part)))
         domain_bytes.append(part.encode('utf-8'))
-
     else:
         domain_bytes.append(b'\x00')
 
@@ -115,7 +108,7 @@ def looper(sleep_len):
                 loop_function(*args)
 
                 if (sleep_len):
-                    fast_sleep(sleep_len)
+                    time.sleep(sleep_len)
 
         return wrapper
     return decorator
@@ -129,12 +122,9 @@ def dyn_looper(loop_function):
             if (sleep_amount == 'break'): break
             elif (not sleep_amount): continue
 
-            fast_sleep(sleep_amount)
+            time.sleep(sleep_amount)
 
     return wrapper
-
-
-_err_write = sys.stderr.write
 
 
 class Log:
@@ -149,9 +139,9 @@ class Log:
 
     @classmethod
     def console(cls, thing_to_print):
-        _err_write(thing_to_print + '\n')
+        print(thing_to_print)
 
     @classmethod
-    def p(cls, thing_to_print):
+    def verbose(cls, thing_to_print):
         if (cls._verbose):
-            _err_write(thing_to_print + '\n')
+            print(thing_to_print)

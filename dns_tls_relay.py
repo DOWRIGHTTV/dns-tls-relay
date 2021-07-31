@@ -4,7 +4,6 @@ import os, sys
 import traceback
 import time
 import threading
-import random
 import ssl
 import socket
 import select
@@ -12,7 +11,8 @@ import argparse
 
 from sys import argv
 from copy import copy
-from collections import deque, Counter
+from random import randint
+from collections import Counter
 from ipaddress import IPv4Address
 
 import basic_tools as tools
@@ -20,20 +20,23 @@ import basic_tools as tools
 from basic_tools import Log
 from advanced_tools import relay_queue
 from dns_tls_constants import * # pylint: disable=unused-wildcard-import
-from dns_tls_protocols import TLSRelay
+from dns_tls_protocols import TLSRelay, Reachability
 from dns_tls_packets import ClientRequest, ServerResponse
 
 __all__ = (
     'DNSRelay'
 )
 
+
 class DNSRelay:
-    protocol = PROTO.TCP
-    tls_up = True # assuming servers are up on startup
+    protocol = PROTO.DNS_TLS
+    tls_up = False
+
     dns_servers = DNS_SERVERS(
-        {'ip': None, PROTO.TCP: True},
-        {'ip': None, PROTO.TCP: True}
+        {'ip': None, PROTO.DNS_TLS: False},
+        {'ip': None, PROTO.DNS_TLS: False}
     )
+    dns_records = {}
 
     _request_map = {}
     _records_cache = None
@@ -42,26 +45,31 @@ class DNSRelay:
     # dynamic inheritance reference
     _packet_parser = ClientRequest
 
-    def __init__(self, l_ip):
-        self._l_ip = l_ip
+    def __init__(self):
+        threading.Thread(target=self.responder).start()
 
-        if (self.is_service_loop):
-            self._epoll = select.epoll()
-            self._registered_socks = {}
-
-            # assigning methods as local objects to prevent lookups
-            self._epoll_poll = self._epoll.poll
-            self._registered_socks_get = self._registered_socks.get
-
-            threading.Thread(target=self.responder).start()
+        # assigning object methods to prevent lookup
+        self._request_map_pop = self._request_map.pop
 
         self._records_cache_add = self._records_cache.add
         self._records_cache_search = self._records_cache.search
-        self._request_map_pop = self._request_map.pop
 
     @classmethod
     def run(cls, listening_addresses):
         Log.console('INITIALIZING: Primary service.')
+
+        cls._registered_socks = {}
+        cls._epoll = select.epoll()
+
+        # running main epoll/ socket loop. threaded so proxy and server can run side by side
+        # NOTE: threading.Thread(target=service_loop._listener).start()
+        # starting a registration thread for all available interfaces
+        # upon registration the threads will exit
+        for ip_addr in listening_addresses:
+            threading.Thread(target=cls._register, args=(ip_addr,)).start()
+
+        Reachability.run(cls)
+        TLSRelay.run(cls)
 
         # initializing dns cache/ sending in reference to needed methods for top domains
         cls._records_cache = DNSCache(
@@ -69,44 +77,39 @@ class DNSRelay:
             request_handler=cls._handle_query
         )
 
-        # defining main epoll/ socket loop prior for register methods reference.
-        service_loop = cls(None)
+        self = cls()
+        threading.Thread(target=self._listener).start()
 
-        # starting a registration thread for all available interfaces
-        # upon registration the threads will exit
-        for ip in listening_addresses:
-            self = cls(ip)
-            threading.Thread(target=self._register, args=(service_loop,)).start()
-
-        TLSRelay.run(cls)
-
-        # engaging epoll listener. local traffic processing starts here.
-        service_loop._listener()
-
-    def _register(self, listener):
+    @classmethod
+    def _register(cls, listener_ip):
         '''will register interface with listener. requires subclass property for listener_sock returning valid socket object.
         once registration is complete the thread will exit.'''
 
-        Log.console(f'REGISTERING: {self._l_ip}.')
+        Log.console(f'[{listener_ip}] Started registration.')
 
-        l_sock = self.listener_sock
+        l_sock = cls._listener_sock(listener_ip)
+        cls._registered_socks[l_sock.fileno()] = L_SOCK(listener_ip, l_sock, l_sock.send, l_sock.sendto, l_sock.recvfrom)
 
-        listener._registered_socks[l_sock.fileno()] = l_sock
-        listener._epoll.register(l_sock.fileno(), select.EPOLLIN)
+        cls._epoll.register(l_sock.fileno(), select.EPOLLIN)
 
-        Log.console(f'COMPLETE: {self._l_ip}.')
+        Log.console(f'[{listener_ip}][{l_sock.fileno()}] Listener registered.')
 
-    @tools.looper(NO_DELAY)
     def _listener(self):
-        l_socks = self._epoll_poll()
-        for fd, _ in l_socks:
-            sock = self._registered_socks_get(fd)
-            try:
-                data, address = sock.recvfrom(2048)
-            except OSError:
-                continue # can happen if epoll returns, but packet invalid
+        epoll_poll = self._epoll.poll
+        registered_socks_get = self._registered_socks.get
 
-            self._parse_packet(data, address, sock)
+        while True:
+            l_socks = epoll_poll()
+            for fd, _ in l_socks:
+
+                sock = registered_socks_get(fd)
+
+                try:
+                    data, address = sock.recvfrom(2048)
+                except OSError:
+                    continue # can happen if poll returns, but packet invalid
+
+                self._parse_packet(data, address, sock)
 
     def _parse_packet(self, data, address, sock):
         client_query = ClientRequest(data, address, sock)
@@ -121,13 +124,15 @@ class DNSRelay:
                 self._handle_query(client_query)
 
     def _cached_response(self, client_query):
+        '''searches cache for query name. if a cached record is found, a response will be generated
+        and sent back to the client.'''
+
         cached_dom = self._records_cache_search(client_query.request)
-        if (not cached_dom.records): return False
+        if (cached_dom.records):
+            client_query.generate_cached_response(cached_dom)
+            self.send_to_client(client_query, client_query)
 
-        client_query.generate_cached_response(cached_dom)
-        self.send_to_client(client_query, client_query)
-
-        return True
+            return True
 
     @classmethod
     def _handle_query(cls, client_query):
@@ -136,19 +141,25 @@ class DNSRelay:
 
         client_query.generate_dns_query(new_dns_id, cls.protocol)
 
-        TLSRelay.relay.add(client_query)
+        TLSRelay.relay.add(client_query) # pylint: disable=no-member
 
     @classmethod
     # NOTE: maybe put a sleep on iteration, use a for loop?
     def _get_unique_id(cls):
+        request_map = cls._request_map
+
         with cls._id_lock:
-            while True:
-                dns_id = random.randint(70, 32000)
-                if (dns_id in cls._request_map): continue
+            # NOTE: maybe tune this number. under high load collisions could occur and we dont want it to waste time
+            # because other requests must wait for this process to complete since we are now using a queue system for
+            # while waiting for a decision instead of individual threads.
+            for _ in range(100):
 
-                cls._request_map[dns_id] = 1
+                dns_id = randint(70, 32000)
+                if (dns_id not in request_map):
 
-                return dns_id
+                    request_map[dns_id] = 1
+
+                    return dns_id
 
     @relay_queue(Log, name='DNSRelay')
     def responder(self, server_response):
@@ -166,33 +177,29 @@ class DNSRelay:
             if (not client_query.top_domain):
                 self.send_to_client(server_response, client_query)
 
+            #NOTE: will is valid check prevent empty RRs from being cached.??
             if (server_response.data_to_cache):
                 self._records_cache_add(client_query.request, server_response.data_to_cache)
 
     @staticmethod
     def send_to_client(server_response, client_query):
         try:
-            client_query.sock.sendto(server_response.send_data, client_query.address)
+            client_query.sendto(server_response.send_data, client_query.address)
         except OSError:
-            pass # socket will persist through errors.
+            pass
 
-    @property
-    def listener_sock(self):
+    @staticmethod
+    def _listener_sock(listen_ip):
         l_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         try:
-            l_sock.bind((str(self._l_ip), PROTO.DNS))
+            l_sock.bind((f'{listen_ip}', PROTO.DNS))
         except OSError:
-            raise RuntimeError(f'{self._l_ip} was unable to bind!')
+            raise RuntimeError(f'[{listen_ip}] Failed to bind address!')
         else:
             l_sock.setblocking(0)
             l_sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
 
         return l_sock
-
-    @property
-    def is_service_loop(self):
-        '''boolean value representing whether current instance managing the epoll loop.'''
-        return self._l_ip is None
 
 
 class DNSCache(dict):
@@ -206,40 +213,37 @@ class DNSCache(dict):
     initialization is the same as a dict, with the addition of two required method calls for callback references
     to the dns server.
 
-        set_query_generator(*reference to packet class*)
-        set_query_handler(*reference to dns server request handler function*)
+        packet (*reference to packet class*)
+        request_handler (*reference to dns server request handler function*)
 
-    if the above callbacks are not set the top domains caching system will actively update records, though the counts
+    if the above callbacks are not set the top domains caching system will NOT actively update records, though the counts
     will still be accurate/usable.
     '''
 
     __slots__ = (
-        # protected vars
         '_dns_packet', '_request_handler',
 
-        # private vars
-        '__dom_counter', '__top_domains',
-        '__cnter_lock', '__top_dom_filter'
+        '_dom_counter', '_top_domains',
+        '_cnter_lock', '_top_dom_filter'
     )
 
     def __init__(self, *, packet=None, request_handler=None):
         self._dns_packet = packet
         self._request_handler = request_handler
 
-        self.__dom_counter = Counter()
-        self.__top_domains = {}
-        self.__top_dom_filter = []
-        self.__cnter_lock  = threading.Lock()
+        self._dom_counter = Counter()
+        self._top_domains = {}
+        self._top_dom_filter = []
+        self._cnter_lock  = threading.Lock()
 
         self._load_top_domains()
-
         threading.Thread(target=self._auto_clear_cache).start()
         if (self._dns_packet and self._request_handler):
             threading.Thread(target=self._auto_top_domains).start()
 
     def __str__(self):
         return ' '.join([
-            f'TOP DOMAIN COUNT: {len(self.__top_domains)} | TOP DOMAINS: {self.__top_domains}',
+            f'TOP DOMAIN COUNT: {len(self._top_domains)} | TOP DOMAINS: {self._top_domains}',
             f'CACHE SIZE: {sys.getsizeof(self)} | NUMBER OF RECORDS: {len(self)} | CACHE: {super().__str__()}'
         ])
 
@@ -272,7 +276,7 @@ class DNSCache(dict):
         '''add query to cache after calculating expiration time.'''
         self[request] = data_to_cache
 
-        Log.p(f'CACHE ADD | NAME: {request} TTL: {data_to_cache.ttl}')
+        Log.verbose(f'[{request}:{data_to_cache.ttl}] Added to standard cache. ')
 
     def search(self, query_name):
         '''if client requested domain is present in cache, will return namedtuple of time left on ttl
@@ -284,18 +288,17 @@ class DNSCache(dict):
         return self[query_name]
 
     def _increment_if_valid_top(self, domain):
-        for fltr in self.__top_dom_filter:
+        for fltr in self._top_dom_filter:
             if (fltr in domain): break
-
         else:
-            with self.__cnter_lock:
-                self.__dom_counter[domain] += 1
+            with self._cnter_lock:
+                self._dom_counter[domain] += 1
 
-    @tools.looper(FIVE_MIN)
+    @tools.looper(THREE_MIN)
     # automated process to flush the cache if expire time has been reached.
     def _auto_clear_cache(self):
-        cache, now = self.items, fast_time()
-        expired = [dom for dom, record in cache() if now > record.expire]
+        now = fast_time()
+        expired = [dom for dom, record in self.items() if now > record.expire]
 
         for domain in expired:
             del self[domain]
@@ -305,19 +308,22 @@ class DNSCache(dict):
     # a new packet and add to the standard tls queue. the recieving end will know how to handle this by settings the client address
     # to none in the session tracker.
     def _auto_top_domains(self):
-        self.__top_domains = {dom[0]:cnt for cnt, dom
-            in enumerate(self.__dom_counter.most_common(TOP_DOMAIN_COUNT), 1)}
+        most_common_doms = self._dom_counter.most_common
+        self._top_domains = {dom[0]:cnt for cnt, dom
+            in enumerate(most_common_doms(TOP_DOMAIN_COUNT), 1)}
 
-        for domain in self.__top_domains:
-            self._request_handler(self._dns_packet(domain))
+        request_handler, dns_packet = self._request_handler, self._dns_packet
+        for domain in self._top_domains:
+            request_handler(dns_packet(domain))
+            fast_sleep(.1)
 
-        tools.write_cache(self.__top_domains)
+        tools.write_cache(self._top_domains)
 
     # loads top domains from file for persistence between restarts/shutdowns and top domains filter
     def _load_top_domains(self):
         dns_cache = tools.load_cache('top_domains')
-        self.__top_domains = dns_cache['top_domains']
-        self.__top_dom_filter = set(dns_cache['filter'])
+        self._top_domains = dns_cache['top_domains']
+        self._top_dom_filter = set(dns_cache['filter'])
 
-        temp_dict = reversed(list(self.__top_domains))
-        self.__dom_counter = Counter({domain: count for count, domain in enumerate(temp_dict)})
+        temp_dict = reversed(list(self._top_domains))
+        self._dom_counter = Counter({domain: count for count, domain in enumerate(temp_dict)})
