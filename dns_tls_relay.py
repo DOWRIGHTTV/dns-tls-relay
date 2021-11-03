@@ -67,7 +67,7 @@ class DNSRelay:
 
         # initializing dns cache/ sending in reference to needed methods for top domains
         cls._records_cache = DNSCache(
-            packet=ClientRequest.generate_local_query,
+            dns_packet=ClientRequest.generate_local_query,
             request_handler=cls._handle_query
         )
 
@@ -224,8 +224,8 @@ class DNSCache(dict):
         '_cnter_lock', '_top_dom_filter'
     )
 
-    def __init__(self, *, packet=None, request_handler=None):
-        self._dns_packet = packet
+    def __init__(self, *, dns_packet=None, request_handler=None):
+        self._dns_packet = dns_packet
         self._request_handler = request_handler
 
         self._dom_counter = Counter()
@@ -234,7 +234,7 @@ class DNSCache(dict):
 
         self._load_top_domains()
         threading.Thread(target=self._auto_clear_cache).start()
-        if (self._dns_packet and self._request_handler):
+        if (dns_packet and request_handler):
             threading.Thread(target=self._auto_top_domains).start()
 
     # searching key directly will return calculated ttl and associated records

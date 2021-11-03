@@ -6,8 +6,10 @@ import ssl
 from socket import socket, AF_INET, SOCK_STREAM
 
 from dns_tls_constants import *
+
 from basic_tools import Log, looper
 from advanced_tools import relay_queue, Initialize
+
 from dns_tls_packets import ClientRequest
 
 

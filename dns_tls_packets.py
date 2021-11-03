@@ -2,7 +2,7 @@
 
 from collections import namedtuple
 
-from basic_tools import *
+from protocol_tools import *
 from advanced_tools import bytecontainer
 
 
@@ -32,6 +32,7 @@ class ClientRequest:
 
         self.dns_id    = 1
         self.send_data = b''
+        self.additional_data = b''
 
     # if called before the parse method has been called, the request will not be known yet. this is mostly redundant
     # to the console log message output while relaying a request so consider removing this.
