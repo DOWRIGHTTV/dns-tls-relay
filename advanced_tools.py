@@ -5,7 +5,7 @@ import threading
 from copy import copy
 from collections import deque
 
-from protocol_tools import Log
+from basic_tools import Log
 from dns_tls_constants import MSEC, fast_time, fast_sleep
 
 
