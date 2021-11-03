@@ -1,9 +1,5 @@
 #!/usr/bin/env python3
 
-import json
-
-from datetime import datetime, timezone
-
 from dns_tls_constants import *
 
 def parse_query_name(data, dns_query=None, *, qname=False):
@@ -26,7 +22,7 @@ def parse_query_name(data, dns_query=None, *, qname=False):
 
             # calculates the value of the pointer then uses value as original dns query index. this used to be a
             # separate function, but it felt like a waste so merged it. (-12 is to account for header data)
-            name_ptr = section_len << 8 | data[0] & 16383 - 12
+            name_ptr = (section_len << 8 | data[0]) & 16383 - 12
             data = dns_query[name_ptr:]
 
             # ensuring offset is only added once if multiple pointers are followed
