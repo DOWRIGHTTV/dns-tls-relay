@@ -1,29 +1,24 @@
 #!/usr/bin/env python3
 
-import os, sys
+import os
 import time
 import argparse
 
 from sys import argv
 from ipaddress import IPv4Address
 
+from dns_tls_constants import hard_out
 from basic_tools import Log
 from dns_tls_relay import DNSRelay
 
 # override for testing arguments
 DISABLED = False
 
-# addresses which the relay will receive dns requests
-LISTENING_ADDRESSES = (
-    '127.0.0.1',
-)
-
 # must support DNS over TLS (not https/443, tcp/853)
 DEFAULT_SERVER_1 = '1.1.1.1'
 DEFAULT_SERVER_2 = '1.0.0.1'
-SERVERS = [DEFAULT_SERVER_1, DEFAULT_SERVER_2]
 
-# this makes me feel cool. especially when i havent left the house in forever due to covid-19.
+# this makes me feel cool. especially when i haven't left the house in forever due to covid-19.
 def display_banner():
     print('@@@@@@@    @@@@@@   @@@@@@@     @@@@@@@   @@@@@@@@  @@@        @@@@@@   @@@ @@@')
     print('@@@@@@@@  @@@@@@@@  @@@@@@@     @@@@@@@@  @@@@@@@@  @@@       @@@@@@@@  @@@ @@@')
@@ -37,7 +32,7 @@ def display_banner():
     print(':: :  :    : :  :      :         :   : :  : :: ::   : :: : :   :   : :     :   ')
     print('by DOWRIGHT | https://github.com/dowrighttv                    ^^^^ for fun ^_^')
     print('===============================================================================')
-    time.sleep(.5)
+    time.sleep(1)
     print('starting...')
     time.sleep(1)
 
@@ -47,50 +42,48 @@ def argument_validation():
     if (len(SERVERS) != 2):
         raise ValueError('2 public resolvers must be specified if the server argument is used.')
 
-    ip_validation = list(LISTENING_ADDRESSES)
-
-    DNSRelay.dns_servers.primary['ip']   = SERVERS[0]
-    DNSRelay.dns_servers.secondary['ip'] = SERVERS[1]
-
-    ip_validation.extend(SERVERS)
-
+    ip_validation = [*LISTENER_IPS, *SERVERS]
     for addr in ip_validation:
         try:
             IPv4Address(addr)
         except:
             raise ValueError(f'argument {addr} is an invalid ip address.')
 
-if __name__ == '__main__':
-    parser = argparse.ArgumentParser(description = 'Privacy proxy which converts DNS/UDP to TLS + local record caching.')
-    parser.add_argument('--version', action='version', version='DoTrelay 9001')
-    parser.add_argument('-i', '--ip-addrs', help='comma separated ips to listen on')
-    parser.add_argument('-s', '--servers', help='comma separated ips of public DoT resolvers')
+    DNSRelay.dns_servers.primary['ip']   = SERVERS[0]
+    DNSRelay.dns_servers.secondary['ip'] = SERVERS[1]
+
+if (__name__ == '__main__'):
+    parser = argparse.ArgumentParser(description='Privacy proxy converting DNS/UDP to TLS w/ local record caching.')
+    parser.add_argument('--version', action='version', version='v9001b')
+    parser.add_argument('-l', '--listeners', help='comma separated ips to listen on')
+    parser.add_argument('-r', '--resolvers', help='comma separated ips of public DoT resolvers')
     parser.add_argument('-v', '--verbose', help='prints output to screen', action='store_true')
 
     args = parser.parse_args(argv[1:])
 
-    l_addrs = args.ip_addrs
-    servers = args.servers
-    VERBOSE = args.verbose
+    if (args.resolvers):
+        SERVERS = tuple(args.resolvers.split(','))
 
-    if (servers):
-        SERVERS = tuple(servers.split(','))
+    else:
+        SERVERS = (DEFAULT_SERVER_1, DEFAULT_SERVER_2)
 
-    if (l_addrs):
-        LISTENING_ADDRESSES = tuple(l_addrs.split(','))
+    if (args.listeners):
+        LISTENER_IPS = tuple(args.listeners.split(','))
+
+    else:
+        LISTENER_IPS = ('127.0.0.1',)
 
     try:
         argument_validation()
     except ValueError as E:
         print(E)
-        sys.exit()
+        hard_out()
 
     if (os.getuid() or DISABLED):
         print('DNS over TLS Relay must be ran as root.')
-        sys.exit()
-
+        hard_out()
 
     display_banner()
 
-    Log.setup(verbose=VERBOSE)
-    DNSRelay.run(LISTENING_ADDRESSES)
+    Log.setup(verbose=args.verbose)
+    DNSRelay.run(LISTENER_IPS)

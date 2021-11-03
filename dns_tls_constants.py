@@ -1,13 +1,18 @@
 #!/usr/bin/env python3
 
+import os as _os
 import time as _time
 
+from functools import partial as _partial
 from struct import Struct as _Struct
 from enum import IntEnum as _IntEnum
 from collections import namedtuple as _namedtuple
 
 fast_time = _time.time
 fast_sleep = _time.sleep
+
+hard_out = _partial(_os._exit, 1)
+btoia = _partial(int.from_bytes, byteorder='big', signed=False)
 
 byte_join = b''.join
 
@@ -37,11 +42,11 @@ FIVE_MIN = 300
 
 # namedtuples
 RELAY_CONN = _namedtuple('relay_conn', 'remote_ip sock send recv version')
-DNS_CACHE  = _namedtuple('dns_cache', 'ttl records')
+DNS_CACHE = _namedtuple('dns_cache', 'ttl records')
 CACHED_RECORD = _namedtuple('cached_record', 'expire ttl records')
 DNS_SERVERS = _namedtuple('dns_server', 'primary secondary')
 
-#SOCKET
+# SOCKET
 L_SOCK = _namedtuple('listener_socket', 'ip socket send sendto recvfrom')
 
 # COMPILED Structs
@@ -74,6 +79,7 @@ class DNS(_IntEnum):
     ROOT = 0
     AR = 1
     NS = 2
+    AAAA = 28
     OPT = 41
 
     QUERY = 0
