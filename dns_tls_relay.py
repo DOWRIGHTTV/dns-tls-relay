@@ -1,6 +1,5 @@
 #!/usr/bin/env python3
 
-import traceback
 import threading
 import socket
 import select
@@ -16,7 +15,7 @@ from basic_tools import Log
 from advanced_tools import relay_queue
 
 from dns_tls_protocols import TLSRelay, Reachability
-from dns_tls_packets import ClientRequest, ServerResponse
+from dns_tls_packets import ClientRequest, ttl_rewrite
 
 __all__ = (
     'DNSRelay'
@@ -25,16 +24,20 @@ __all__ = (
 
 class DNSRelay:
     protocol = PROTO.DNS_TLS
+
+    # flag used to check status of relay. if one remote server is up, tls_up=True. both remote servers have to be down
+    # for tls_up=False.
     tls_up = False
+    keepalive_interval = 0
 
     dns_servers = DNS_SERVERS(
         {'ip': None, PROTO.DNS_TLS: False},
         {'ip': None, PROTO.DNS_TLS: False}
     )
-    dns_records = {}
 
+    _epoll = select.epoll()
+    _registered_socks = {}
     _request_map = {}
-    _records_cache = None
     _id_lock = threading.Lock()
 
     # dynamic inheritance reference
@@ -50,17 +53,16 @@ class DNSRelay:
         self._records_cache_search = self._records_cache.search
 
     @classmethod
-    def run(cls, listening_addresses):
+    def run(cls, listening_addresses, keepalive_interval):
         Log.console('[initializing] Primary service.')
 
-        cls._registered_socks = {}
-        cls._epoll = select.epoll()
+        cls.keepalive_interval = keepalive_interval
 
         # running main epoll/ socket loop. threaded so proxy and server can run side by side
         # NOTE: threading.Thread(target=service_loop._listener).start() starting a registration thread for all available
         # interfaces. once registered the threads will exit.
         for ip_addr in listening_addresses:
-            threading.Thread(target=cls._register, args=(ip_addr,)).start()
+            threading.Thread(target=cls._register, args=(f'{ip_addr}',)).start()
 
         Reachability.run(cls)
         TLSRelay.run(cls)
@@ -81,7 +83,7 @@ class DNSRelay:
         Log.console(f'[{listener_ip}] Started registration.')
 
         l_sock = cls._listener_sock(listener_ip)
-        cls._registered_socks[l_sock.fileno()] = L_SOCK(listener_ip, l_sock, l_sock.send, l_sock.sendto, l_sock.recvfrom)
+        cls._registered_socks[l_sock.fileno()] = L_SOCK(listener_ip, l_sock, l_sock.sendto, l_sock.recvfrom)
 
         cls._epoll.register(l_sock.fileno(), select.EPOLLIN)
 
@@ -109,27 +111,35 @@ class DNSRelay:
     def _parse_packet(self, data, address, sock):
         client_query = ClientRequest(address, sock)
         try:
-            client_query.parse(data)
-        except:
-            traceback.print_exc()
+            local_domain = client_query.parse(data)
+        except Exception as E:
+            Log.error(f'[parser/client request] {E}')
         else:
-            if (client_query.qr != DNS.QUERY
-                    or client_query.qtype not in [DNS.AR, DNS.AAAA, DNS.NS]
-                    or client_query.local_domain):
+            # if query flag is not set the packet will be assumed malformed and silently dropped
+            if (local_domain or client_query.qr != DNS.QUERY): return
 
-                return
+            # A and NS records will have a cache pre check before sending out
+            if client_query.qtype in [DNS.AR, DNS.NS]:
 
-            if not self._cached_response(client_query):
+                # if qname is in cache, the caching system will respond so no further action is required otherwise
+                # request will be processed, then added to queue for secure transmission to remote resolver.
+                if not self._cached_response(client_query):
+                    self._handle_query(client_query)
+
+            # AAAA records will not be cached so the check will be skipped
+            elif client_query.qtype in [DNS.AAAA]:
                 self._handle_query(client_query)
+
+            # NOTE: a request reaching this point falls outside the scope of the relay and will be silently dropped
 
     def _cached_response(self, client_query):
         '''searches cache for query name. if a cached record is found, a response will be generated
         and sent back to the client.'''
 
-        cached_dom = self._records_cache_search(client_query.request)
+        cached_dom = self._records_cache_search(client_query.qname)
         if (cached_dom.records):
             client_query.generate_cached_response(cached_dom)
-            self.send_to_client(client_query, client_query)
+            self.send_to_client(client_query.send_data, client_query)
 
             return True
 
@@ -161,30 +171,30 @@ class DNSRelay:
 
     @relay_queue(Log, name='DNSRelay')
     def responder(self, received_data):
-        server_response = ServerResponse()
-        try:
-            server_response.parse(received_data)
-        except Exception:
-            raise
-        else:
-            client_query = self._request_map_pop(server_response.dns_id, None)
-            if (not client_query): return
+        # dns id is the first 2 bytes in the dns header
+        dns_id = short_unpackf(received_data)[0]
 
-            # generate response for client, if top domain generate for cache storage
-            server_response.generate_server_response(client_query.dns_id)
+        client_query = self._request_map_pop(dns_id, None)
+        if (not client_query):
+            return
+
+        try:
+            server_response, cache_data = ttl_rewrite(received_data, client_query.dns_id)
+        except Exception as E:
+            Log.error(f'[parser/server response] {E}')
+        else:
             if (not client_query.top_domain):
                 self.send_to_client(server_response, client_query)
 
-            # NOTE: will is_valid check prevent empty RRs from being cached.??
-            if (server_response.data_to_cache):
-                self._records_cache_add(client_query.request, server_response.data_to_cache)
+            if (cache_data):
+                self._records_cache_add(client_query.request, cache_data)
 
     @staticmethod
     def send_to_client(server_response, client_query):
         try:
-            client_query.sendto(server_response.send_data, client_query.address)
+            client_query.sendto(server_response, client_query.address)
         except OSError:
-            pass
+            Log.error(f'[send] Failed response to {client_query.address}.')
 
     @staticmethod
     def _listener_sock(listen_ip):

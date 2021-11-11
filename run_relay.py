@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 
 import os
+import sys
 import time
 import argparse
 
-from sys import argv
 from ipaddress import IPv4Address
 
 from dns_tls_constants import hard_out
@@ -36,54 +36,35 @@ def display_banner():
     print('starting...')
     time.sleep(1)
 
-def argument_validation():
-    # forcing 2 servers for failover. technically not required, but would need to modify
-    # data structure holding server data // 2 servers is standard anyways.
-    if (len(SERVERS) != 2):
-        raise ValueError('2 public resolvers must be specified if the server argument is used.')
-
-    ip_validation = [*LISTENER_IPS, *SERVERS]
-    for addr in ip_validation:
-        try:
-            IPv4Address(addr)
-        except:
-            raise ValueError(f'argument {addr} is an invalid ip address.')
-
-    DNSRelay.dns_servers.primary['ip']   = SERVERS[0]
-    DNSRelay.dns_servers.secondary['ip'] = SERVERS[1]
-
 if (__name__ == '__main__'):
     parser = argparse.ArgumentParser(description='Privacy proxy converting DNS/UDP to TLS w/ local record caching.')
     parser.add_argument('--version', action='version', version='v9001b')
-    parser.add_argument('-l', '--listeners', help='comma separated ips to listen on')
-    parser.add_argument('-r', '--resolvers', help='comma separated ips of public DoT resolvers')
-    parser.add_argument('-v', '--verbose', help='prints output to screen', action='store_true')
 
-    args = parser.parse_args(argv[1:])
+    parser.add_argument('-l',
+        metavar='IPA1 [IPA2...]', help='List of IP Addresses to listen for requests on',
+        type=IPv4Address, nargs=2, default='127.0.0.1'
+    )
 
-    if (args.resolvers):
-        SERVERS = tuple(args.resolvers.split(','))
+    parser.add_argument('-r',
+        metavar='IPA1 IPA2', help='List of (2) IP Addresses of desired public DoT resolvers',
+        type=IPv4Address, nargs=2, default=[DEFAULT_SERVER_1, DEFAULT_SERVER_2]
+    )
 
-    else:
-        SERVERS = (DEFAULT_SERVER_1, DEFAULT_SERVER_2)
-
-    if (args.listeners):
-        LISTENER_IPS = tuple(args.listeners.split(','))
-
-    else:
-        LISTENER_IPS = ('127.0.0.1',)
-
-    try:
-        argument_validation()
-    except ValueError as E:
-        print(E)
-        hard_out()
+    parser.add_argument('-k', help='Enables TLS connection keepalives', type=int, choices=[4, 6, 8], default=0)
+    parser.add_argument('-c', help='Prints running output to screen', action='store_true')
+    parser.add_argument('-v', help='Prints information messages to screen', action='store_true')
 
     if (os.getuid() or DISABLED):
-        print('DNS over TLS Relay must be ran as root.')
+        print('DoTRelay must be ran as root.')
         hard_out()
 
     display_banner()
 
-    Log.setup(verbose=args.verbose)
-    DNSRelay.run(LISTENER_IPS)
+    args = parser.parse_args(sys.argv[1:])
+
+    Log.setup(verbose=args.v)
+
+    DNSRelay.dns_servers.primary['ip'] = f'{args.r[0]}'
+    DNSRelay.dns_servers.secondary['ip'] = f'{args.r[1]}'
+
+    DNSRelay.run(args.l, args.k)

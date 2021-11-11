@@ -69,12 +69,15 @@ class ProtoRelay:
                 threading.Thread(target=self._recv_handler).start()
 
             else:
-                # incrementing fail detection count
-                self._send_cnt += 1
+                break
 
-                Log.console(
-                    f'[{self._relay_conn.remote_ip}/{self._relay_conn.version}][{attempt}] Sent {client_query.request}'
-                )
+        # incrementing fail detection count
+        self._send_cnt += 1
+
+        # general log for queries being sent which also shows if new tls connection had to be established.
+        Log.console(
+            f'[{self._relay_conn.remote_ip}/{self._relay_conn.version}][{attempt}] Sent {client_query.request}'
+        )
 
     def _recv_handler(self):
         '''called in a thread after creating new socket to handle all responses from remote server.'''
@@ -108,7 +111,7 @@ class ProtoRelay:
             try:
                 self._relay_conn.sock.close()
             except:
-                Log.console(f'[{self._relay_conn.remote_ip}] Failed to close socket while marking server down.')
+                Log.error(f'[{self._relay_conn.remote_ip}] Failed to close socket while marking server down.')
 
 
 class TLSRelay(ProtoRelay):
@@ -117,7 +120,7 @@ class TLSRelay(ProtoRelay):
     _dns_packet = ClientRequest.generate_keepalive
 
     __slots__ = (
-        '_tls_context'
+        '_tls_context', '_keepalive_interval', 'keepalive_status'
     )
 
     def __init__(self, *args, **kwargs):
@@ -130,7 +133,7 @@ class TLSRelay(ProtoRelay):
 
         self._tls_context = tls_context
 
-        threading.Thread(target=self._tls_keepalive).start()
+        threading.Thread(target=self._keepalive_run).start()
 
     # iterating over dns server list and calling to create a connection to first available server. this will only happen
     # if a socket connection isn't already established when attempting to send query.
@@ -172,7 +175,7 @@ class TLSRelay(ProtoRelay):
                 # will close the socket as part of the marking process
                 self.mark_server_down()
 
-                Log.console(f'[{self._relay_conn.remote_ip}/{self._protocol.name}] Remote server timeout, marked down.')
+                Log.error(f'[{self._relay_conn.remote_ip}/{self._protocol.name}] Remote server timeout, marked down.')
 
                 return
 
@@ -186,6 +189,9 @@ class TLSRelay(ProtoRelay):
                 # resetting fail detection
                 self._last_rcvd = fast_time()
                 self._send_cnt = 0
+
+                # resetting keepalive to configured interval
+                self._keepalive_reset()
 
                 recv_buff_append(data_from_server)
                 while recv_buffer:
@@ -221,10 +227,10 @@ class TLSRelay(ProtoRelay):
         try:
             dns_sock.connect((tls_server, PROTO.DNS_TLS))
         except OSError as ose:
-            Log.console(f'[{tls_server}/{self._protocol.name}] Failed to connect. {ose}')
+            Log.error(f'[{tls_server}/{self._protocol.name}] Failed to connect. {ose}')
 
         except Exception as E:
-            Log.console(f'[{tls_server}/{self._protocol.name}] TLS context error while attempting to connect. {E}')
+            Log.error(f'[{tls_server}/{self._protocol.name}] TLS context error while attempting to connect. {E}')
 
         else:
             self._relay_conn = RELAY_CONN(
@@ -235,13 +241,33 @@ class TLSRelay(ProtoRelay):
 
         return None
 
-    @looper(KEEPALIVE_INTERVAL)
-    # will send a valid dns query every ^ seconds to ensure the pipe does not get closed by remote server for
-    # inactivity. this is only needed if servers are rapidly closing connections and can be enable/disabled.
-    def _tls_keepalive(self):
-        if (self._keepalives):
+    # TODO: (for dnx) see if configured interval changes should be reset or if it would be ok to let them take effect
+    #  on the next iteration.
+    def _keepalive_run(self):
+        keepalive_interval = self.DNSRelay.keepalive_interval
+        keepalive_status = self.keepalive_status.wait
+        keepalive_set = self.keepalive_status.set
 
-            self.relay.add(self._dns_packet(KEEP_ALIVE_DOMAIN, self._protocol)) # pylint: disable=no-member
+        relay_add = self.relay.add
+
+        while True:
+            if (not keepalive_interval):
+                fast_sleep(TEN_SEC)
+
+                continue
+
+            # returns True is reset which means we do not need to send a keep alive. If timeout is reached will return
+            # False notifying that a keepalive should be sent
+            if keepalive_status(keepalive_interval):
+                continue
+
+            relay_add(self._dns_packet(KEEP_ALIVE_DOMAIN, self._protocol)) # pylint: disable=no-member
+
+            keepalive_set()
+
+    def _keepalive_reset(self):
+        self.keepalive_status.set()
+        self.keepalive_status.clear()
 
 
 class Reachability:

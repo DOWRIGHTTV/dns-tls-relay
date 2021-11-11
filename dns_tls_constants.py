@@ -11,6 +11,7 @@ from collections import namedtuple as _namedtuple
 fast_time = _time.time
 fast_sleep = _time.sleep
 
+write_log = _partial(print, flush=True)
 hard_out = _partial(_os._exit, 1)
 btoia = _partial(int.from_bytes, byteorder='big', signed=False)
 
@@ -34,6 +35,7 @@ NULL_ADDR = (None, None)
 # times
 NO_DELAY = 0
 MSEC = .001
+ONE_SEC = 1
 FIVE_SEC = 5
 TEN_SEC = 10
 THIRTY_SEC = 30
@@ -47,7 +49,7 @@ CACHED_RECORD = _namedtuple('cached_record', 'expire ttl records')
 DNS_SERVERS = _namedtuple('dns_server', 'primary secondary')
 
 # SOCKET
-L_SOCK = _namedtuple('listener_socket', 'ip socket send sendto recvfrom')
+L_SOCK = _namedtuple('listener_socket', 'ip socket sendto recvfrom')
 
 # COMPILED Structs
 dns_header_unpack = _Struct('!6H').unpack

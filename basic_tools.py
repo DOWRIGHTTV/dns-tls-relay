@@ -30,6 +30,7 @@ def write_cache(top_domains):
 def looper(sleep_len):
     def decorator(loop_function):
 
+        # pre process logic to optimize decorated functions with NO_DELAY set
         if (sleep_len):
             def wrapper(*args):
                 while True:
@@ -55,14 +56,18 @@ class Log:
 
             @classmethod
             def func(cls, thing_to_print):
-                print(f'[{cls.time()}]{thing_to_print}')
+                write_log(f'[{cls.time()}]{thing_to_print}')
 
             # overloading verbose method with newly defined function.
             setattr(cls, 'verbose', func)
 
     @classmethod
     def console(cls, msg):
-        print(f'[{cls.time()}]{msg}')
+        write_log(f'[{cls.time()}]{msg}')
+
+    @classmethod
+    def error(cls, msg):
+        write_log(f'[{cls.time()}]{msg}')
 
     @staticmethod
     # verbose method does nothing by default. if verbose is set on start this method will be overloaded with a proper

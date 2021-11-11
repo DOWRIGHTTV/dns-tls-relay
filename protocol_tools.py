@@ -5,11 +5,12 @@ from dns_tls_constants import *
 def parse_query_name(data, dns_query=None, *, qname=False):
     '''parses dns name from sent in data. uses overall dns query to follow pointers. will return
     name and offset integer value if qname arg is True otherwise will only return offset.'''
-    offset, pointer_present, query_name = 0, False, []
+    offset, contains_pointer, query_name = 0, False, []
 
     # TODO: this could be problematic since we slice down data. from what i my limited brain understands at the moment,
     #  data should never be an emtpy byte string if non malformed. the last iteration would have a null byte which is
     #  what this condition is actually testing against for when to stop iteration.
+    #       // testing suggests this is fine for now
     while data[0]:
 
         # adding 1 to section_len to account for itself
@@ -18,40 +19,42 @@ def parse_query_name(data, dns_query=None, *, qname=False):
         # pointer value check. this used to be a separate function, but it felt like a waste so merged it.
         # NOTE: is this a problem is we don't pass in the reference query? is it possible for a pointer to be present in
         # cases where this function is used for non primary purposes?
-        if (192 & section_len == 192):
+        if (section_len & 192 == 192):
 
             # calculates the value of the pointer then uses value as original dns query index. this used to be a
-            # separate function, but it felt like a waste so merged it. (-12 is to account for header data)
-            name_ptr = (section_len << 8 | data[0]) & 16383 - 12
-            data = dns_query[name_ptr:]
+            # separate function, but it felt like a waste so merged it. (-12 accounts for header not included)
+            data = dns_query[((section_len << 8 | data[0]) & 16383) - 12:]
 
-            # ensuring offset is only added once if multiple pointers are followed
-            offset += 2 if not pointer_present else 0
-
-            pointer_present = True
+            contains_pointer = True
 
         else:
             # name len + integer value of initial length
-            offset += section_len + 1 if not pointer_present else 0
+            offset += section_len + 1 if not contains_pointer else 0
 
-            query_name.append(data[1:section_len + 1].decode())
+            query_name.append(data[:section_len].decode())
 
             # slicing out processed section
-            data = data[section_len + 1:]
+            data = data[section_len:]
 
-    # increment offset to account for null byte if name did not contain a pointer
-    offset += 1 if not pointer_present else 0
+    # increment offset +2 for pointer length or +1 for termination byte if name did not contain a pointer
+    offset += 2 if contains_pointer else 1
 
-    return ('.'.join(query_name), offset) if qname else offset
+    # evaluating qname for .local domain or non fqdn
+    local_domain = True if len(query_name) == 1 or (query_name and query_name[-1] == 'local') else False
+
+    if (qname):
+        return offset, local_domain, '.'.join(query_name)
+
+    return offset, local_domain
 
 def domain_stob(domain_name):
-    # "if part" condition is there because a root query evals the empty string length to 0. this would be ok, but then
-    # we would have to make a condition to detect that to prevent a redundant termination byte.
     domain_bytes = byte_join([
-        byte_pack(len(part)) + part.encode('utf-8') for part in domain_name.split('.') if part
+        byte_pack(len(part)) + part.encode('utf-8') for part in domain_name.split('.')
     ])
 
-    return domain_bytes + b'\x00'
+    # root query (empty string) gets eval'd to length 0 and doesnt need a term byte. ternary will add term byte, if the
+    # domain name is not a null value.
+    return domain_bytes + b'\x00' if domain_name else domain_bytes
 
 # will create dns header specific to response. default resource record count is 1
 def build_dns_response_hdr(dns_id, record_count=1, *, rd=1, ad=0, cd=0, rc=0):
