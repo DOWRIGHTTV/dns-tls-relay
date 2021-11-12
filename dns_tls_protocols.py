@@ -246,7 +246,6 @@ class TLSRelay(ProtoRelay):
     def _keepalive_run(self):
         keepalive_interval = self.DNSRelay.keepalive_interval
         keepalive_status = self.keepalive_status.wait
-        keepalive_set = self.keepalive_status.set
 
         relay_add = self.relay.add
 
@@ -256,15 +255,20 @@ class TLSRelay(ProtoRelay):
 
                 continue
 
-            # returns True is reset which means we do not need to send a keep alive. If timeout is reached will return
+            # returns True if reset which means we do not need to send a keep alive. If timeout is reached will return
             # False notifying that a keepalive should be sent
             if keepalive_status(keepalive_interval):
+                Log.verbose(f'[keepalive] timer reset to {keepalive_interval}.')
                 continue
 
             relay_add(self._dns_packet(KEEP_ALIVE_DOMAIN, self._protocol)) # pylint: disable=no-member
 
-            keepalive_set()
+            Log.verbose(f'[keepalive] added to relay queue and cleared')
 
+    # TODO: is the set/clear action thread safe in conjunction with the keepalive status? can the thread change before
+    #  clear can be called where the keepalive status would immediately return again.
+    #   - this isnt necessarily a big deal, but it would be high strung busy loop until the clear goes into effect. it
+    #   - may not actually matter at all and im just in sleepy brain mode.
     def _keepalive_reset(self):
         self.keepalive_status.set()
         self.keepalive_status.clear()
