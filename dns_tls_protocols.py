@@ -133,6 +133,8 @@ class TLSRelay(ProtoRelay):
 
         self._tls_context = tls_context
 
+        self.keepalive_status = threading.Event()
+
         threading.Thread(target=self._keepalive_run).start()
 
     # iterating over dns server list and calling to create a connection to first available server. this will only happen
