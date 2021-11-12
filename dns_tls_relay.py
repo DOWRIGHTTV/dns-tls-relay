@@ -187,7 +187,7 @@ class DNSRelay:
                 self.send_to_client(server_response, client_query)
 
             if (cache_data):
-                self._records_cache_add(client_query.request, cache_data)
+                self._records_cache_add(client_query.qname, cache_data)
 
     @staticmethod
     def send_to_client(server_response, client_query):
@@ -272,20 +272,20 @@ class DNSCache(dict):
     def __missing__(self, key):
         return NOT_VALID
 
-    def add(self, request, data_to_cache):
+    def add(self, qname, data_to_cache):
         '''add query to cache after calculating expiration time.'''
-        self[request] = data_to_cache
+        self[qname] = data_to_cache
 
-        Log.verbose(f'[{request}:{data_to_cache.ttl}] Added to standard cache. ')
+        Log.verbose(f'[{qname}:{data_to_cache.ttl}] Added to standard cache. ')
 
-    def search(self, query_name):
+    def search(self, qname):
         '''if client requested domain is present in cache, will return namedtuple of time left on ttl
         and the dns records, otherwise will return None. top domain count will get automatically
         incremented if it passes filter.'''
 
-        self._increment_if_valid_top(query_name)
+        self._increment_if_valid_top(qname)
 
-        return self[query_name]
+        return self[qname]
 
     def _increment_if_valid_top(self, domain):
         # list comp result will be a list containing any filter string found within the domain. if the list contains

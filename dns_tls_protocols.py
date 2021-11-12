@@ -76,7 +76,7 @@ class ProtoRelay:
 
         # general log for queries being sent which also shows if new tls connection had to be established.
         Log.console(
-            f'[{self._relay_conn.remote_ip}/{self._relay_conn.version}][{attempt}] Sent {client_query.request}'
+            f'[{self._relay_conn.remote_ip}/{self._relay_conn.version}][{attempt}] Sent {client_query.qname}'
         )
 
     def _recv_handler(self):
@@ -120,7 +120,7 @@ class TLSRelay(ProtoRelay):
     _dns_packet = ClientRequest.generate_keepalive
 
     __slots__ = (
-        '_tls_context', '_keepalive_interval', 'keepalive_status'
+        '_tls_context', 'keepalive_status'
     )
 
     def __init__(self, *args, **kwargs):
@@ -258,12 +258,12 @@ class TLSRelay(ProtoRelay):
             # returns True if reset which means we do not need to send a keep alive. If timeout is reached will return
             # False notifying that a keepalive should be sent
             if keepalive_status(keepalive_interval):
-                Log.verbose(f'[keepalive] timer reset to {keepalive_interval}.')
+                Log.verbose(f'[keepalive] Timer reset to {keepalive_interval}.')
                 continue
 
             relay_add(self._dns_packet(KEEP_ALIVE_DOMAIN, self._protocol)) # pylint: disable=no-member
 
-            Log.verbose(f'[keepalive] added to relay queue and cleared')
+            Log.verbose(f'[keepalive] Added to relay queue and cleared')
 
     # TODO: is the set/clear action thread safe in conjunction with the keepalive status? can the thread change before
     #  clear can be called where the keepalive status would immediately return again.
