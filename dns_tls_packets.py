@@ -177,41 +177,47 @@ def ttl_rewrite(data, dns_id):
     # ================
     # RESOURCE RECORD
     # ================
-    # offset is reset to prevent carry over from above.
     resource_records = dns_payload[offset + 4:]
+
+    # offset is reset to prevent carry over from above. # NOTE: original_ttl is left out because it shouldnt be needed.
+    # we can protect return from a try block, but i would rather detect the error because it shouldnt be possible to
+    # have a records cache without an original_ttl var assignment.
     offset, record_cache = 0, []
 
     # parsing standard and authority records
     for record_count in [resource_count, authority_count]:
 
         # iterating once for every record based on provided record count. if this number is forged/tampered with it
-        # will cause the parsing to fail. NOTE: ensure this isn't fatal
+        # will cause the parsing to fail. NOTE: ensure this isn't fatal.
         for _ in range(record_count):
             record_type, record, offset = _parse_record(resource_records, offset, dns_payload)
 
-            # TTL rewrite done on A records which functionally clamps TTLs between a min and max value
-            if (record_type == DNS.AR):
+            # TTL rewrite done on A records which functionally clamps TTLs between a min and max value. CNAME is listed
+            # first, followed by A records so the original_ttl var will be whatever the last A record ttl parsed is.
+            # generally all A records have the same ttl. CNAME ttl can differ, but will get clamped with A so will
+            # likely end up the same as A records.
+            if (record_type in [DNS.AR, DNS.CNAME]):
                 original_ttl, modified_ttl, record.ttl = _get_new_ttl(record)
 
                 send_data += record
 
-                if (len(record_cache) < MAX_A_RECORD_COUNT):
+                if (len(record_cache) < MAX_A_RECORD_COUNT or record_type != DNS.AR):
                     record_cache.append(record)
 
-            elif (record_type != DNS.AR):
+            # dns system level, mail, and txt records dont need to be clamped and will be relayed to client as is
+            else:
                 send_data += record
-
-                original_ttl = record.ttl
 
                 record_cache.append(record)
 
-    # keeping any additional records intact.
+    # keeping any additional records intact
     # TODO: see if modifying/ manipulating additional records would be beneficial or even useful in any way
     send_data += resource_records[offset:]
 
-    cache_data = CACHED_RECORD(int(fast_time()) + original_ttl, original_ttl, record_cache) if record_cache else None
+    if (record_cache):
+        return send_data, CACHED_RECORD(int(fast_time()) + original_ttl, original_ttl, record_cache)
 
-    return send_data, cache_data
+    return send_data, None
 
 def _parse_record(resource_records, total_offset, dns_query):
     current_record = resource_records[total_offset:]

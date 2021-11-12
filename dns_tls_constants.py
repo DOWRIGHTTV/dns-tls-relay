@@ -27,7 +27,7 @@ DEFAULT_TTL = 3600
 MAX_A_RECORD_COUNT = 3
 HEARTBEAT_FAIL_LIMIT = 3
 TOP_DOMAIN_COUNT = 20
-KEEP_ALIVE_DOMAIN = 'duckduckgo.com'
+KEEP_ALIVE_DOMAIN = 'dnxfirewall.com'
 
 NOT_VALID = -1
 NULL_ADDR = (None, None)
@@ -78,11 +78,16 @@ class PROTO(_IntEnum):
 
 
 class DNS(_IntEnum):
-    ROOT = 0
-    AR = 1
-    NS = 2
-    AAAA = 28
-    OPT = 41
+    ROOT  = 0
+    AR    = 1
+    NS    = 2
+    CNAME = 5
+    SOA   = 6
+    PTR   = 12
+    MX    = 15
+    TXT   = 16
+    AAAA  = 28
+    OPT   = 41
 
     QUERY = 0
     KEEPALIVE = 69
