@@ -7,9 +7,6 @@ from datetime import datetime, timezone
 from dns_tls_constants import *
 
 def load_cache(filename):
-    if (not isinstance(filename, str)):
-        raise TypeError('cache file must be a string.')
-
     try:
         with open(f'{filename}.json', 'r') as settings:
             cache = json.load(settings)
@@ -50,28 +47,39 @@ def looper(sleep_len):
 class Log:
 
     @classmethod
-    def setup(cls, verbose):
+    def setup(cls, *, console, verbose):
         # define function to print log message. this will overload verbose function if enabled.
         if (verbose):
 
             @classmethod
             def func(cls, thing_to_print):
-                write_log(f'[{cls.time()}]{thing_to_print}')
+                write_log(f'[{cls.time()}][verbose]{thing_to_print}')
 
             # overloading verbose method with newly defined function.
             setattr(cls, 'verbose', func)
 
+        if (console):
+
+            @classmethod
+            def func(cls, thing_to_print):
+                write_log(f'[{cls.time()}][console]{thing_to_print}')
+
+            # overloading console method with newly defined function.
+            setattr(cls, 'console', func)
+
+    @classmethod
+    def system(cls, msg):
+        write_log(f'[{cls.time()}][system]{msg}')
+
     @classmethod
     def console(cls, msg):
-        write_log(f'[{cls.time()}]{msg}')
+        pass
 
     @classmethod
     def error(cls, msg):
-        write_log(f'[{cls.time()}]{msg}')
+        write_log(f'[{cls.time()}][error]{msg}')
 
     @staticmethod
-    # verbose method does nothing by default. if verbose is set on start this method will be overloaded with a proper
-    # method to print log entry.
     def verbose(msg):
         pass
 

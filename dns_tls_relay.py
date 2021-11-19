@@ -40,9 +40,6 @@ class DNSRelay:
     _request_map = {}
     _id_lock = threading.Lock()
 
-    # dynamic inheritance reference
-    _packet_parser = ClientRequest
-
     def __init__(self):
         threading.Thread(target=self.responder).start()
 
@@ -54,7 +51,7 @@ class DNSRelay:
 
     @classmethod
     def run(cls, listening_addresses, keepalive_interval):
-        Log.console('[initializing] Primary service.')
+        Log.system('Initializing primary service...')
 
         cls.keepalive_interval = keepalive_interval
 
@@ -80,18 +77,19 @@ class DNSRelay:
         '''will register interface with listener. requires subclass property for listener_sock returning valid socket
          object. once registration is complete the thread will exit.'''
 
-        Log.console(f'[{listener_ip}] Started registration.')
+        Log.system(f'[{listener_ip}] Started registration.')
 
         l_sock = cls._listener_sock(listener_ip)
         cls._registered_socks[l_sock.fileno()] = L_SOCK(listener_ip, l_sock, l_sock.sendto, l_sock.recvfrom)
 
         cls._epoll.register(l_sock.fileno(), select.EPOLLIN)
 
-        Log.console(f'[{listener_ip}][{l_sock.fileno()}] Listener registered.')
+        Log.system(f'[{listener_ip}][{l_sock.fileno()}] Listener registered.')
 
     def _listener(self):
         epoll_poll = self._epoll.poll
         registered_socks_get = self._registered_socks.get
+        parse_packet = self._parse_packet
 
         while True:
             l_socks = epoll_poll()
@@ -106,7 +104,7 @@ class DNSRelay:
                 except OSError:
                     continue
 
-                self._parse_packet(data, address, sock)
+                parse_packet(data, address, sock)
 
     def _parse_packet(self, data, address, sock):
         client_query = ClientRequest(address, sock)
@@ -119,22 +117,21 @@ class DNSRelay:
             if (local_domain or client_query.qr != DNS.QUERY): return
 
             # A and NS records will have a cache pre check before sending out
-            if client_query.qtype in [DNS.AR, DNS.NS]:
+            if (client_query.qtype in [DNS.AR, DNS.NS]):
 
-                # if qname is in cache, the caching system will respond so no further action is required otherwise
-                # request will be processed, then added to queue for secure transmission to remote resolver.
+                # no further action is required if cache contains matching record, otherwise request will be processed,
+                # then added to queue for secure transmission to remote resolver.
                 if not self._cached_response(client_query):
                     self._handle_query(client_query)
 
-            # AAAA records will not be cached so the check will be skipped
-            elif client_query.qtype in [DNS.AAAA]:
+            # AAAA records does not get cached so the check will be skipped
+            elif (client_query.qtype in [DNS.AAAA]):
                 self._handle_query(client_query)
 
             # NOTE: a request reaching this point falls outside the scope of the relay and will be silently dropped
 
     def _cached_response(self, client_query):
-        '''searches cache for query name. if a cached record is found, a response will be generated
-        and sent back to the client.'''
+        '''search cache for qname. if a record is found, a response will be generated and sent back to the client.'''
 
         cached_dom = self._records_cache_search(client_query.qname)
         if (cached_dom.records):
@@ -202,10 +199,11 @@ class DNSRelay:
         try:
             l_sock.bind((f'{listen_ip}', PROTO.DNS))
         except OSError:
-            raise RuntimeError(f'[{listen_ip}] Failed to bind address!')
-        else:
-            l_sock.setblocking(False)
-            l_sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            Log.error(f'[{listen_ip}] Failed to bind address!')
+            hard_out()
+
+        l_sock.setblocking(False)
+        l_sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
 
         return l_sock
 

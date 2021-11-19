@@ -169,7 +169,7 @@ def relay_queue(Log, name=None):
         job_set = job_available.set
 
         def wrapper(*args):
-            Log.verbose(f'{name}/relay_queue started.')
+            Log.system(f'{name}/relay_queue started.')
 
             while True:
                 job_wait()
@@ -183,7 +183,7 @@ def relay_queue(Log, name=None):
                     try:
                         func(*args, job)
                     except Exception as E:
-                        Log.error(f'error while processing a {name}/dnx_queue started job. | {E}')
+                        Log.error(f'while processing a {name}/dnx_queue started job, {E}')
 
                         fast_sleep(MSEC)
 

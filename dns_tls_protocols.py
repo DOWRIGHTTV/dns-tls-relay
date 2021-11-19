@@ -12,6 +12,8 @@ from advanced_tools import relay_queue, Initialize
 
 from dns_tls_packets import ClientRequest
 
+ATTEMPTS = (0, 1)
+
 
 class ProtoRelay:
     '''parent class for udp and tls relays providing standard built in methods to start, check status, or add jobs to
@@ -60,7 +62,7 @@ class ProtoRelay:
         raise NotImplementedError('relay must be implemented in the subclass.')
 
     def _send_query(self, client_query):
-        for attempt in [0, 1]:
+        for attempt in ATTEMPTS:
             try:
                 self._relay_conn.send(client_query.send_data)
             except OSError:
@@ -74,7 +76,7 @@ class ProtoRelay:
         # incrementing fail detection count
         self._send_cnt += 1
 
-        # general log for queries being sent which also shows if new tls connection had to be established.
+        # general log for queries being sent which also identifies a new tls connection
         Log.console(
             f'[{self._relay_conn.remote_ip}/{self._relay_conn.version}][{attempt}] Sent {client_query.qname}'
         )
@@ -168,6 +170,9 @@ class TLSRelay(ProtoRelay):
         recv_buff_append = recv_buffer.append
         recv_buff_clear  = recv_buffer.clear
         conn_recv = self._relay_conn.recv
+
+        keepalive_reset = self.keepalive_status.set
+
         responder_add = self.DNSRelay.responder.add
 
         while True:
@@ -192,8 +197,8 @@ class TLSRelay(ProtoRelay):
                 self._last_rcvd = fast_time()
                 self._send_cnt = 0
 
-                # resetting keepalive to configured interval
-                self._keepalive_reset()
+                # breaking keepalive timer from blocking, which will effectively reset the timer.
+                keepalive_reset()
 
                 recv_buff_append(data_from_server)
                 while recv_buffer:
@@ -247,7 +252,8 @@ class TLSRelay(ProtoRelay):
     #  on the next iteration.
     def _keepalive_run(self):
         keepalive_interval = self.DNSRelay.keepalive_interval
-        keepalive_status = self.keepalive_status.wait
+        keepalive_timer = self.keepalive_status.wait
+        keepalive_reset = self.keepalive_status.clear
 
         relay_add = self.relay.add
 
@@ -259,21 +265,14 @@ class TLSRelay(ProtoRelay):
 
             # returns True if reset which means we do not need to send a keep alive. If timeout is reached will return
             # False notifying that a keepalive should be sent
-            if keepalive_status(keepalive_interval):
-                Log.verbose(f'[keepalive] Timer reset to {keepalive_interval}.')
+            if keepalive_timer(keepalive_interval):
                 continue
+
+            keepalive_reset()
 
             relay_add(self._dns_packet(KEEP_ALIVE_DOMAIN, self._protocol)) # pylint: disable=no-member
 
-            Log.verbose(f'[keepalive] Added to relay queue and cleared')
-
-    # TODO: is the set/clear action thread safe in conjunction with the keepalive status? can the thread change before
-    #  clear can be called where the keepalive status would immediately return again.
-    #   - this isnt necessarily a big deal, but it would be high strung busy loop until the clear goes into effect. it
-    #   - may not actually matter at all and im just in sleepy brain mode.
-    def _keepalive_reset(self):
-        self.keepalive_status.set()
-        self.keepalive_status.clear()
+            Log.verbose(f'[keepalive][{keepalive_interval}] Added to relay queue and cleared')
 
 
 class Reachability:
@@ -302,8 +301,8 @@ class Reachability:
 
     @classmethod
     def run(cls, DNSServer):
-        '''starting remote server responsiveness detection as a thread. the remote servers will only
-        be checked for connectivity if they are mark as down during the polling interval.'''
+        '''starting remote server responsiveness detection as a thread. the remote servers will only be checked for
+        connectivity if they are marked as down during the polling interval.'''
 
         # initializing tls instance and starting thread
         reach_tls = cls(PROTO.DNS_TLS, DNSServer)
@@ -325,7 +324,7 @@ class Reachability:
                 secure_server[PROTO.DNS_TLS] = True
                 self.DNSRelay.tls_up = True
 
-                Log.console(f'[{secure_server["ip"]}/{self._protocol.name}] DNS server is reachable.')
+                Log.system(f'[{secure_server["ip"]}/{self._protocol.name}] DNS server is reachable.')
 
         self._initialize.done()
 
