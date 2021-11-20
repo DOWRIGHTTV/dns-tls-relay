@@ -46,12 +46,12 @@ if (__name__ == '__main__'):
     parser.add_argument('--version', action='version', version='v9001b')
 
     parser.add_argument('-l',
-        metavar='ip_addr [ip_addr...]', help='List of IP Addresses to listen for requests on',
+        metavar='listen_ip [listen_ip...]', help='List of IP Addresses to listen for requests on',
         type=IPv4Address, nargs=1, default='127.0.0.1'
     )
 
     parser.add_argument('-r',
-        metavar='ip_addr', help='List of (2) IP Addresses of desired public DoT resolvers',
+        metavar='resolver_ip', help='List of (2) IP Addresses of desired public DoT resolvers',
         type=IPv4Address, nargs=2, default=[DEFAULT_SERVER_1, DEFAULT_SERVER_2]
     )
 
