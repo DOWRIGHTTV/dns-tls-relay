@@ -253,7 +253,7 @@ class TLSRelay(ProtoRelay):
     def _keepalive_run(self):
         keepalive_interval = self.DNSRelay.keepalive_interval
         keepalive_timer = self.keepalive_status.wait
-        keepalive_reset = self.keepalive_status.clear
+        keepalive_continue = self.keepalive_status.clear
 
         relay_add = self.relay.add
 
@@ -266,13 +266,13 @@ class TLSRelay(ProtoRelay):
             # returns True if reset which means we do not need to send a keep alive. If timeout is reached will return
             # False notifying that a keepalive should be sent
             if keepalive_timer(keepalive_interval):
-                continue
+                keepalive_continue()
 
-            keepalive_reset()
+            else:
 
-            relay_add(self._dns_packet(KEEP_ALIVE_DOMAIN, self._protocol)) # pylint: disable=no-member
+                relay_add(self._dns_packet(KEEP_ALIVE_DOMAIN, self._protocol)) # pylint: disable=no-member
 
-            Log.verbose(f'[keepalive][{keepalive_interval}] Added to relay queue and cleared')
+                Log.verbose(f'[keepalive][{keepalive_interval}] Added to relay queue and cleared')
 
 
 class Reachability:
