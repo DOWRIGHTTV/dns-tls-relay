@@ -3,7 +3,7 @@
 import threading
 import ssl
 
-from socket import socket, AF_INET, SOCK_STREAM
+from socket import socket, AF_INET, SOCK_STREAM, timeout as TimeoutError
 
 from dns_tls_constants import *
 
