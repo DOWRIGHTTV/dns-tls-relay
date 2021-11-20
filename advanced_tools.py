@@ -1,13 +1,12 @@
 #!/usr/bin/env python3
 
-import time
 import threading
 
 from copy import copy
 from collections import deque
 
 from basic_tools import Log
-from dns_tls_constants import fast_time, fast_sleep
+from dns_tls_constants import MSEC, ONE_SEC, fast_time, fast_sleep, byte_join
 
 
 def bytecontainer(obj_name, field_names):
@@ -18,59 +17,71 @@ def bytecontainer(obj_name, field_names):
     if not isinstance(field_names, list):
         field_names = field_names.split()
 
+    len_fields = len(field_names)
+
+    # NOTE: nonlocal to builtins/globals perf ratio is 4.5 to 7.8 (1.75x faster)
+    _len = len
+    _zip = zip
+    _sum = sum
+    _copy = copy
+    _setattr = setattr
+    _getattr = getattr
+    _bytearray = bytearray
+
     class ByteContainer:
 
-        __slots__ = (
-            '_obj_name', '_field_names', '_len_fields',
-            *field_names
-        )
+        __slots__ = (*field_names,)
 
-        def __init__(self, obj_name, field_names):
-            self._obj_name = obj_name
-            self._field_names = field_names
+        def __init__(self):
             for name in field_names:
-                setattr(self, name, '')
-
-            self._len_fields = len(field_names)
+                _setattr(self, name, b'')
 
         def __repr__(self):
-            return f"{self.__class__.__name__}({self._obj_name}, '{' '.join(self._field_names)}')"
+            return f'{self.__class__.__name__}({obj_name}, {" ".join(field_names)})'
 
         def __str__(self):
-            fast_get = self.__getattribute__
-            fields = [f'{n}={fast_get(n)}' for n in self._field_names]
-
-            return f"{self._obj_name}({', '.join(fields)})"
+            return byte_join([_getattr(self, name) for name in field_names])
 
         def __call__(self, *args):
-            if (len(args) != self._len_fields):
-                raise TypeError(f'Expected {self._len_fields} arguments, got {len(args)}')
+            if (_len(args) != len_fields):
+                raise TypeError(f'Expected {len_fields} arguments, got {_len(args)}')
 
-            new_container = copy(self)
-            for name, value in zip(self._field_names, args):
-                setattr(new_container, name, value)
+            new_container = _copy(self)
+            for name, value in _zip(field_names, args):
+                _setattr(new_container, name, value)
 
             return new_container
 
         def __len__(self):
-            fast_get = self.__getattribute__
+            ba = _bytearray()
+            for name in field_names:
+                ba += _getattr(self, name)
 
-            return sum([len(fast_get(field_name)) for field_name in self._field_names])
+            return _len(ba)
 
         def __getitem__(self, position):
-            return getattr(self, f'{self._field_names[position]}')
+            return _getattr(self, f'{field_names[position]}')
 
         def __iter__(self):
-            fast_get = self.__getattribute__
+            yield from [_getattr(self, x) for x in field_names]
 
-            yield from [fast_get(x) for x in self._field_names]
+        def __add__(self, other):
+            ba = _bytearray()
+            for name in field_names:
+                ba += _getattr(self, name)
 
-        # NOTE: consider removing this for direct access. this used to provide some input validation, but now that
-        # it has been removed, the method call itself is pretty worthless.
-        def update(self, field_name, new_value):
-           setattr(self, field_name, new_value)
+            return ba + other
 
-    return ByteContainer(obj_name, field_names)
+        def __radd__(self, other):
+            ba = _bytearray()
+            for name in field_names:
+                ba += _getattr(self, name)
+
+            return other + ba
+
+    container = ByteContainer()
+
+    return container
 
 
 class Initialize:
@@ -99,7 +110,7 @@ class Initialize:
 
         # blocking until all threads check in by individually calling done method
         while not self._initial_load_complete:
-            fast_sleep(1)
+            fast_sleep(ONE_SEC)
 
         self.has_ran = True
         self._is_initializing = False
@@ -112,7 +123,7 @@ class Initialize:
 
         self._thread_ready.add(threading.get_ident())
 
-        Log.console(f'[{self._name}] thread checkin.')
+        Log.verbose(f'[{self._name}] thread check-in.')
 
     def wait_in_line(self, *, wait_for):
         '''blocking call to wait for all lower number threads to complete before checking in and returning.
@@ -120,14 +131,14 @@ class Initialize:
             initialize = Initialize(*args, **kwargs)
             initialize.wait_in_line(wait_for=2)
 
-        this call has the potential to deadlock. positions must be sequential work as intended, but are not
+        this call has the potential to deadlock. positions must be sequential to work as intended, but are not
         required to be called in order.
 
         '''
         if (not self._is_initializing): return
 
         while wait_for < len(self._thread_ready):
-            fast_sleep(1)
+            fast_sleep(ONE_SEC)
 
     @property
     def _initial_load_complete(self):
@@ -158,10 +169,9 @@ def relay_queue(Log, name=None):
         job_set = job_available.set
 
         def wrapper(*args):
-            Log.console(f'{name}/relay_queue started.')
+            Log.system(f'{name}/relay_queue started.')
 
             while True:
-
                 job_wait()
 
                 # clearing job notification
@@ -169,16 +179,13 @@ def relay_queue(Log, name=None):
 
                 # processing all available jobs
                 while queue:
-
                     job = queue_get()
                     try:
-                        # TODO: see if we should just send in the queue reference and perform the pop in the called func. if
-                        # we do this we would probably want it to be optional and use a conditional set on start to identify.
                         func(*args, job)
                     except Exception as E:
-                        Log.console(f'error while processing a {name}/dnx_queue started job. | {E}')
+                        Log.error(f'while processing a {name}/dnx_queue started job, {E}')
 
-                        fast_sleep(.001)
+                        fast_sleep(MSEC)
 
         def add(job):
             '''adds job to work queue, then marks event indicating a job is available.'''

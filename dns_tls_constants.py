@@ -1,13 +1,19 @@
 #!/usr/bin/env python3
 
+import os as _os
 import time as _time
 
+from functools import partial as _partial
 from struct import Struct as _Struct
 from enum import IntEnum as _IntEnum
 from collections import namedtuple as _namedtuple
 
 fast_time = _time.time
 fast_sleep = _time.sleep
+
+write_log = _partial(print, flush=True)
+hard_out = _partial(_os._exit, 1)
+btoia = _partial(int.from_bytes, byteorder='big', signed=False)
 
 byte_join = b''.join
 
@@ -21,7 +27,7 @@ DEFAULT_TTL = 3600
 MAX_A_RECORD_COUNT = 3
 HEARTBEAT_FAIL_LIMIT = 3
 TOP_DOMAIN_COUNT = 20
-KEEP_ALIVE_DOMAIN = 'duckduckgo.com'
+KEEP_ALIVE_DOMAIN = 'dnxfirewall.com'
 
 NOT_VALID = -1
 NULL_ADDR = (None, None)
@@ -29,6 +35,7 @@ NULL_ADDR = (None, None)
 # times
 NO_DELAY = 0
 MSEC = .001
+ONE_SEC = 1
 FIVE_SEC = 5
 TEN_SEC = 10
 THIRTY_SEC = 30
@@ -37,12 +44,12 @@ FIVE_MIN = 300
 
 # namedtuples
 RELAY_CONN = _namedtuple('relay_conn', 'remote_ip sock send recv version')
-DNS_CACHE  = _namedtuple('dns_cache', 'ttl records')
+DNS_CACHE = _namedtuple('dns_cache', 'ttl records')
 CACHED_RECORD = _namedtuple('cached_record', 'expire ttl records')
 DNS_SERVERS = _namedtuple('dns_server', 'primary secondary')
 
-#SOCKET
-L_SOCK = _namedtuple('listener_socket', 'ip socket send sendto recvfrom')
+# SOCKET
+L_SOCK = _namedtuple('listener_socket', 'ip socket sendto recvfrom')
 
 # COMPILED Structs
 dns_header_unpack = _Struct('!6H').unpack
@@ -71,10 +78,16 @@ class PROTO(_IntEnum):
 
 
 class DNS(_IntEnum):
-    ROOT = 0
-    AR = 1
-    NS = 2
-    OPT = 41
+    ROOT  = 0
+    AR    = 1
+    NS    = 2
+    CNAME = 5
+    SOA   = 6
+    PTR   = 12
+    MX    = 15
+    TXT   = 16
+    AAAA  = 28
+    OPT   = 41
 
     QUERY = 0
     KEEPALIVE = 69

@@ -1,64 +1,55 @@
 #!/usr/bin/env python3
 
-import traceback
-
 from collections import namedtuple
 
-from dns_tls_constants import * # pylint: disable=unused-wildcard-import
+from protocol_tools import *
 from advanced_tools import bytecontainer
-from basic_tools import parse_query_name, create_dns_query_header, create_dns_response_header, convert_dns_string_to_bytes
 
 
 class ClientRequest:
     __slots__ = (
         '_data', '_dns_header', '_dns_query',
 
-        'address', 'sendto', 'intf', 'top_domain',
-        'keepalive', 'dom_local', 'fallback',
-        'dns_id', 'request', 'send_data',
-        '_arc', 'additional_data',
+        'address', 'sendto', 'intf',
+        'dns_id', 'top_domain',
 
         'qr', 'op', 'aa', 'tc', 'rd',
         'ra', 'zz', 'ad', 'cd', 'rc',
 
-        'requests', 'qtype', 'qclass', 'question_record'
+        'qname', 'qtype', 'qclass',
+        'question_record', 'additional_records',
+        'send_data'
     )
 
-    def __init__(self, data, address, sock_info):
-        self._data   = data
+    def __init__(self, address, sock_info):
         self.address = address
-        if (data):
-            self._dns_header = data[:12]
-            self._dns_query  = data[12:]
 
         if (sock_info):
             self.sendto = sock_info.sendto
 
         self.top_domain = False if address[0] else True
-        self.keepalive  = False
-        self.dom_local  = False
 
         self.dns_id    = 1
-        self.request   = None
         self.send_data = b''
+        self.additional_records = b''
 
-        # OPT record defaults
-        self._arc = 0
-        self.additional_data = b''
-
+    # if called before the parse method has been called, the request will not be known yet. this is mostly redundant
+    # to the console log message output while relaying a request so consider removing this.
     def __str__(self):
-        return f'dns_query(host={self.address[0]}, port={self.address[1]}, request={self.request})'
+        try:
+            return f'dns_query(host={self.address[0]}, port={self.address[1]}, request={self.qname})'
+        except AttributeError:
+            return f'dns_query(host={self.address[0]}, port={self.address[1]}, request=Unknown)'
 
-    def parse(self):
-        if (not self._data):
-            raise TypeError(f'{__class__.__name__} cannot parse data set to None.')
+    def parse(self, data):
+        _dns_header, _dns_query = data[:12], data[12:]
 
-        self._parse_header()
-        self._parse_dns_query()
-
-    def _parse_header(self):
-        dns_header = dns_header_unpack(self._dns_header)
+        # ================
+        # REQUEST HEADER
+        # ================
+        dns_header = dns_header_unpack(_dns_header)
         self.dns_id = dns_header[0]
+
         self.qr = dns_header[1] >> 15 & 1
         self.op = dns_header[1] >> 11 & 15
         self.aa = dns_header[1] >> 10 & 1
@@ -70,216 +61,195 @@ class ClientRequest:
         self.cd = dns_header[1] >> 4  & 1
         self.rc = dns_header[1]       & 15
 
-    def _parse_dns_query(self):
-        self.request, offset = parse_query_name(self._dns_query, qname=True) # www.micro.com or micro.com || sd.micro.com
-        if ('.' not in self.request or self.request.endswith('.local')):
-            self.dom_local = True
+        # ================
+        # QUESTION RECORD
+        # ================
+        # www.micro.com or micro.com || sd.micro.com
+        offset, local_domain, self.qname = parse_query_name(_dns_query, qname=True)
 
-        self.qtype, self.qclass = double_short_unpack(self._dns_query[offset:])
-        self.question_record = self._dns_query[:offset+4] # ofsset + 4 byte info
-        self.additional_data = self._dns_query[offset+4:]
+        self.qtype, self.qclass = double_short_unpack(_dns_query[offset:])
+        self.question_record = _dns_query[:offset+4]
+        self.additional_records = _dns_query[offset+4:]
+
+        return local_domain
 
     def generate_cached_response(self, cached_dom):
         if (self.send_data):
             raise RuntimeWarning('send data has already been created for this query.')
 
-        send_data = [create_dns_response_header(
-            self.dns_id, len(cached_dom.records), rd=self.rd, cd=self.cd
-        )]
-        send_data.append(self.question_record)
+        send_data = bytearray()
+
+        send_data += build_dns_response_hdr(self.dns_id, len(cached_dom.records), rd=self.rd, cd=self.cd)
+        send_data += self.question_record
+
         for record in cached_dom.records:
-            record.update('ttl', long_pack(cached_dom.ttl))
-            send_data.append(b''.join(record))
+            record.ttl = long_pack(cached_dom.ttl)
 
-        self.send_data = b''.join(send_data)
+            send_data += record
 
-    def generate_dns_query(self, dns_id, protocol):
+        self.send_data = send_data
+
+    def generate_dns_query(self, dns_id):
         if (self.send_data):
             raise RuntimeWarning('send data has already been created for this query.')
 
-        # if additional data seen after question record, will mark additional record count as 1 in dns header
-        if (self.additional_data):
-            self._arc = 1
+        # setting additional data flag in dns header if detected
+        arc = 1 if self.additional_records else 0
 
-        send_data = [b'\x00\x00', create_dns_query_header(dns_id, self._arc, cd=self.cd)]
-        send_data.append(convert_dns_string_to_bytes(self.request))
-        send_data.append(double_short_pack(self.qtype, 1))
-        send_data.append(self.additional_data)
+        # initializing byte array with (2) bytes. these get overwritten with query len actual after processing
+        send_data = bytearray(2)
 
-        # replacing first 2 bytes with data len
-        send_data[0] = short_pack(len(b''.join(send_data[1:])))
+        send_data += build_dns_query_hdr(dns_id, arc, cd=self.cd)
+        send_data += domain_stob(self.qname)
+        send_data += double_short_pack(self.qtype, 1)
 
-        self.send_data = b''.join(send_data)
+        # condition favors normal case of no additional records present.
+        if (arc):
+            send_data += self.additional_records
+
+        send_data[:2] = short_pack(len(send_data) - 2)
+
+        self.send_data = send_data
 
     @classmethod
-    def generate_local_query(cls, request, cd=1):
+    def generate_local_query(cls, qname, cd=1):
         '''alternate constructor for creating locally generated queries (top domains).'''
 
-        self = cls(None, NULL_ADDR, None)
-        # harcorded qtype can change if needed.
-        self.request    = request
+        self = cls(NULL_ADDR, None)
+
+        # hardcoded qtype can change if needed.
+        self.qname    = qname
         self.qtype      = 1
         self.cd         = cd
 
         return self
 
     @classmethod
-    def generate_keepalive(cls, request, protocol, cd=1):
+    def generate_keepalive(cls, qname, cd=1):
         '''alternate construct for creating locally generated keep alive queries.'''
-        self = cls(None, NULL_ADDR, None)
-        # harcorded qtype can change if needed.
-        self.request   = request
+
+        self = cls(NULL_ADDR, None)
+
+        # hardcoded qtype can change if needed.
+        self.qname   = qname
         self.qtype     = 1
         self.cd        = cd
 
-        self.generate_dns_query(DNS.KEEPALIVE, protocol)
+        self.generate_dns_query(DNS.KEEPALIVE)
 
         return self
 
-_records = namedtuple('records', 'resource authority')
+
+# ================
+# SERVER RESPONSE
+# ================
+_records_container = namedtuple('record_container', 'counts records')
+_resource_records = namedtuple('resource_records', 'resource authority')
 _RESOURCE_RECORD = bytecontainer('resource_record', 'name qtype qclass ttl data')
 
+_MINIMUM_TTL = long_pack(MINIMUM_TTL)
+_DEFAULT_TTL = long_pack(DEFAULT_TTL)
 
-class ServerResponse:
-    __slots__ = (
-        '_data', '_dns_header', '_dns_query',
-        '_offset',
+def ttl_rewrite(data, dns_id):
+    dns_header, dns_payload = data[:12], data[12:]
 
-        'dns_id', 'dns_flags', 'question_count',
-        'records', 'additional_count',
+    # converting external/unique dns id back to original dns id of client
+    send_data = bytearray(short_pack(dns_id))
 
-        'qtype', 'qclass', 'question_record',
-        'resource_record', 'data_to_cache',
-        'send_data'
+    # ================
+    # HEADER
+    # ================
+    _dns_header = dns_header_unpack(dns_header)
+
+    resource_count = _dns_header[3]
+    authority_count = _dns_header[4]
+    # additional_count = _dns_header[5]
+
+    send_data += dns_header[2:]
+
+    # ================
+    # QUESTION RECORD
+    # ================
+    # www.micro.com or micro.com || sd.micro.com
+    offset, _ = parse_query_name(dns_payload)
+
+    question_record = dns_payload[:offset + 4]
+
+    send_data += question_record
+
+    # ================
+    # RESOURCE RECORD
+    # ================
+    resource_records = dns_payload[offset + 4:]
+
+    # offset is reset to prevent carry over from above.
+    offset, record_cache = 0, []
+
+    # parsing standard and authority records
+    for record_count in [resource_count, authority_count]:
+
+        # iterating once for every record based on provided record count. if this number is forged/tampered with it
+        # will cause the parsing to fail. NOTE: ensure this isn't fatal.
+        for _ in range(record_count):
+            record_type, record, offset = _parse_record(resource_records, offset, dns_payload)
+
+            # TTL rewrite done on A records which functionally clamps TTLs between a min and max value. CNAME is listed
+            # first, followed by A records so the original_ttl var will be whatever the last A record ttl parsed is.
+            # generally all A records have the same ttl. CNAME ttl can differ, but will get clamped with A so will
+            # likely end up the same as A records.
+            if (record_type in [DNS.AR, DNS.CNAME]):
+                original_ttl, record.ttl = _get_new_ttl(record)
+
+                send_data += record
+
+                # limits A record caching so we arent caching excessive amount of records with the same qname
+                if (len(record_cache) < MAX_A_RECORD_COUNT or record_type != DNS.AR):
+                    record_cache.append(record)
+
+            # dns system level, mail, and txt records dont need to be clamped and will be relayed to client as is
+            else:
+                send_data += record
+
+    # keeping any additional records intact
+    # TODO: see if modifying/ manipulating additional records would be beneficial or even useful in any way
+    send_data += resource_records[offset:]
+
+    if (record_cache):
+        return send_data, CACHED_RECORD(int(fast_time()) + original_ttl, original_ttl, record_cache)
+
+    return send_data, None
+
+def _parse_record(resource_records, total_offset, dns_query):
+    current_record = resource_records[total_offset:]
+
+    offset, _ = parse_query_name(current_record, dns_query)
+
+    # resource record data len. generally 4 for ip address, but can vary. calculating first so we can single shot
+    # create byte container below.
+    dt_len = btoia(current_record[offset + 8:offset + 10])
+
+    resource_record = _RESOURCE_RECORD(
+        current_record[:offset],
+        current_record[offset:offset + 2],
+        current_record[offset + 2:offset + 4],
+        current_record[offset + 4:offset + 8],
+        current_record[offset + 8:offset + 10 + dt_len]
     )
 
-    def __init__(self, data):
-        self._data       = data
-        self._dns_header = data[:12]
-        self._dns_query  = data[12:]
-        self._offset     = 0
+    # name len + 2 bytes(length field) + 8 bytes(type, class, ttl) + data len
+    total_offset += offset + 10 + dt_len
 
-        self.data_to_cache = None
-        self.dns_id    = 0
-        self.send_data = b''
-        self.records   = _records(
-            {'rcv_count': 0, 'records': []},
-            {'rcv_count': 0, 'records': []}
-        )
+    return btoia(resource_record.qtype), resource_record, total_offset
 
-    def parse(self):
-        self._header()
-        self._question_record_handler()
-        self._resource_record_handler()
+def _get_new_ttl(record):
+    '''returns dns records original ttl, the rewritten ttl, and the packed form of the rewritten ttl.'''
+    record_ttl = long_unpack(record.ttl)[0]
+    if (record_ttl < MINIMUM_TTL):
+        return record_ttl, _MINIMUM_TTL
 
-    def _header(self):
-        dns_header = dns_header_unpack(self._dns_header)
-        self.dns_id         = dns_header[0]
-        self.dns_flags      = dns_header[1]
-        self.question_count = dns_header[2]
-        self.records.resource['rcv_count']  = dns_header[3]
-        self.records.authority['rcv_count'] = dns_header[4]
-        self.additional_count = dns_header[5]
+    # rewriting ttl to the remaining amount that was calculated from cached packet or to the maximum defined TTL
+    if (record_ttl > DEFAULT_TTL):
+        return record_ttl, _DEFAULT_TTL
 
-    def _question_record_handler(self):
-        dns_query = self._dns_query
-
-        offset = parse_query_name(dns_query) # www.micro.com or micro.com || sd.micro.com
-
-        self.qtype, self.qclass = double_short_unpack(dns_query[offset:])
-        self.question_record = dns_query[:offset+4] # ofsset + 4 byte info
-        self.resource_record = dns_query[offset+4:]
-
-    # grabbing the records contained in the packet and appending them to their designated lists to be inspected by other methods.
-    # count of records is being grabbed/used from the header information
-    def _resource_record_handler(self):
-        a_record_count, offset = 0, 0
-
-        # parsing standard and authority records
-        for r_field in self.records:
-
-            # iterating once for every record based on count sent. if this number is forged/tampered with
-            # it will cause the parsing to fail. NOTE: ensure this isnt fatal
-            for _ in range(r_field['rcv_count']):
-                record_type, record, offset = self._parse_resource_record(offset)
-
-                # incrementing a record counter to limit amount of records in response
-                if (record_type == DNS.AR):
-                    a_record_count += 1
-
-                # filtering out a records once max count is reached
-                if (a_record_count <= MAX_A_RECORD_COUNT or record_type != DNS.AR):
-                    r_field['records'].append(record)
-
-        # instance assignment to be used by response generation method
-        self._offset = offset
-
-    # creating byte container of dns record values to be used later. now rewriting ttl here.
-    def _parse_resource_record(self, total_offset):
-        local_record = self.resource_record[total_offset:]
-
-        offset = parse_query_name(local_record, self._dns_query)
-        name   = local_record[:offset]
-        qtype  = local_record[offset:offset+2]
-        qclass = local_record[offset+2:offset+4]
-        ttl    = local_record[offset+4:offset+8]
-        dt_len = short_unpack(local_record[offset+8:offset+10])[0]
-        data   = local_record[offset+8:offset+10+dt_len]
-
-        total_offset += offset + dt_len + 10 # length of data + 2 bytes(length field) + 8 bytes(type, class, ttl)
-
-        return short_unpack(qtype)[0], _RESOURCE_RECORD(name, qtype, qclass, ttl, data), total_offset
-
-    def generate_server_response(self, dns_id):
-        send_data, original_ttl = [b'\x00'*14, self.question_record], 0
-
-        # parsing standard and authority records
-        for i, r_field in enumerate(self.records):
-
-            # ttl rewrite to configured bounds (clamping)
-            for record in r_field['records']:
-                original_ttl, modified_ttl, modified_ttl_packed = self._get_new_ttl(record.ttl)
-                record.update('ttl', modified_ttl_packed)
-                send_data.append(byte_join(record))
-
-            # first enumerate iteration filter(resource records) and ensuring its an "A" record, then creating cache data.
-            # NOTE: system will cache for full ttl. the server will override to configured amount responding sending to client.
-            if (not i and original_ttl):
-                self.data_to_cache = CACHED_RECORD(
-                    int(fast_time()) + original_ttl,
-                    original_ttl, r_field['records']
-                )
-
-        # replacing dns head placeholder. needed new record counts calculated before header creation.
-        send_data[0] = self._create_header(dns_id)
-
-        # additional records will remain intact until otherwise needed
-        if (self.additional_count):
-            send_data.append(self.resource_record[self._offset:])
-
-        self.send_data = byte_join(send_data)
-
-    def _get_new_ttl(self, record_ttl):
-        '''returns dns records original ttl, the rewritten ttl, and the packed form of the rewritten ttl.'''
-        record_ttl = long_unpack(record_ttl)[0]
-        if (record_ttl < MINIMUM_TTL):
-            new_record_ttl = MINIMUM_TTL
-
-        # rewriting ttl to the remaining amount that was calculated from cached packet or to the maximum defined TTL
-        elif (record_ttl > DEFAULT_TTL):
-            new_record_ttl = DEFAULT_TTL
-
-        # anything in between the min and max TTL will be retained
-        else:
-            new_record_ttl = record_ttl
-
-        return record_ttl, new_record_ttl, long_pack(new_record_ttl)
-
-    def _create_header(self, dns_id):
-        return dns_header_pack(
-            dns_id, self.dns_flags,
-            self.question_count,
-            len(self.records.resource['records']),
-            len(self.records.authority['records']),
-            self.additional_count
-        )
+    # anything in between the min and max TTL will be retained
+    return record_ttl, long_pack(record_ttl)
