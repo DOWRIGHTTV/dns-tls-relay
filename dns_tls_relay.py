@@ -143,11 +143,12 @@ class DNSRelay:
             return True
 
     @classmethod
-    def _handle_query(cls, client_query):
+    # top_domain will now be set by caller so we don't have to track that within the query object.
+    def _handle_query(cls, client_query, *, top_domain=False):
         new_dns_id = cls._get_unique_id()
-        cls._request_map[new_dns_id] = client_query
-
         client_query.generate_dns_query(new_dns_id)
+
+        cls._request_map[new_dns_id] = (top_domain, client_query)
 
         TLSRelay.relay.add(client_query)
 
@@ -173,7 +174,7 @@ class DNSRelay:
         # dns id is the first 2 bytes in the dns header
         dns_id = short_unpackf(received_data)[0]
 
-        client_query = self._request_map_pop(dns_id, None)
+        top_domain, client_query = self._request_map_pop(dns_id, (None, None))
         if (not client_query):
             return
 
@@ -182,7 +183,7 @@ class DNSRelay:
         except Exception as E:
             Log.error(f'[parser/server response] {E}')
         else:
-            if (dns_id != DNS.TOP_DOMAIN):
+            if (not top_domain):
                 self.send_to_client(server_response, client_query)
 
             if (cache_data):
@@ -315,7 +316,9 @@ class DNSCache(dict):
 
         request_handler, dns_packet = self._request_handler, self._dns_packet
         for domain in top_domains:
-            request_handler(dns_packet(domain))
+            request_handler(dns_packet(domain), top_domain=True)
+
+            # rate limited to make it less aggressive
             fast_sleep(.1)
 
         tools.write_cache(top_domains)
