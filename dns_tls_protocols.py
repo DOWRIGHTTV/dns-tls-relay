@@ -137,10 +137,11 @@ class TLSRelay(ProtoRelay):
 
         self._tls_context = tls_context
 
+        # this is needed for now until we determine whether we will put condition on reset/clears on recv
+        self.keepalive_status = threading.Event()
+
         # won't run keep alive thread if not enabled at startup
         if (self.DNSRelay.keepalive_interval):
-            self.keepalive_status = threading.Event()
-
             threading.Thread(target=self._keepalive_run).start()
 
     # iterating over dns server list and calling to create a connection to first available server. this will only happen
@@ -230,9 +231,9 @@ class TLSRelay(ProtoRelay):
         sock = socket(AF_INET, SOCK_STREAM)
         sock.settimeout(CONNECT_TIMEOUT)
 
-        dns_sock = self._tls_context.wrap_socket(sock, server_hostname=tls_server)
+        dot_sock = self._tls_context.wrap_socket(sock, server_hostname=tls_server)
         try:
-            dns_sock.connect((tls_server, PROTO.DNS_TLS))
+            dot_sock.connect((tls_server, PROTO.DNS_TLS))
         except OSError as ose:
             Log.error(f'[{tls_server}/{self._protocol.name}] Failed to connect. {ose}')
 
@@ -240,10 +241,10 @@ class TLSRelay(ProtoRelay):
             Log.error(f'[{tls_server}/{self._protocol.name}] While attempting to connect: {E}')
 
         else:
-            sock.settimeout(RELAY_TIMEOUT)
+            dot_sock.settimeout(RELAY_TIMEOUT)
 
             self._relay_conn = RELAY_CONN(
-                tls_server, dns_sock, dns_sock.send, dns_sock.recv, dns_sock.version()
+                tls_server, dot_sock, dot_sock.send, dot_sock.recv, dot_sock.version()
             )
 
             return True
@@ -268,7 +269,7 @@ class TLSRelay(ProtoRelay):
 
             else:
 
-                relay_add(self._dns_packet(KEEP_ALIVE_DOMAIN, self._protocol)) # pylint: disable=no-member
+                relay_add(self._dns_packet(KEEP_ALIVE_DOMAIN, self._protocol))
 
                 Log.verbose(f'[keepalive][{keepalive_interval}] Added to relay queue and cleared')
 

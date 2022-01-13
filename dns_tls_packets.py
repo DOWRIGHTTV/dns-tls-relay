@@ -199,9 +199,11 @@ def ttl_rewrite(data, dns_id, len=len, min=min, max=max):
             # likely end up the same as A records.
             if (record_type in [DNS.A, DNS.CNAME]):
                 original_ttl = long_unpack(record.ttl)[0]
-                record.ttl = max(_MINIMUM_TTL, min(original_ttl, _DEFAULT_TTL))
+                record.ttl = long_pack(
+                    max(MINIMUM_TTL, min(original_ttl, DEFAULT_TTL))
+                )
 
-                send_data += long_pack(record)
+                send_data += record
 
                 # limits A record caching so we aren't caching excessive amount of records with the same qname
                 if (len(record_cache) < MAX_A_RECORD_COUNT or record_type != DNS.A):
