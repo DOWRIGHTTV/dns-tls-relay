@@ -3,7 +3,7 @@
 import threading
 import ssl
 
-from socket import socket, AF_INET, SOCK_STREAM, timeout as TimeoutError
+from socket import socket, AF_INET, SOCK_STREAM
 
 from dns_tls_constants import *
 
@@ -97,28 +97,30 @@ class ProtoRelay:
             self.mark_server_down()
 
     # processes that were unable to connect/ create a socket will send in the remote server ip that was attempted. if a
-    # remote server isn't specified the active relay socket connection's remote ip will be used. we dont know which
-    # ip goes to which server position so we have to iterate over the pair and match. this works out better because
+    # remote server isn't specified the active relay socket connection's remote ip will be used. we don't know which
+    # ip goes to which server position, so we have to iterate over the pair and match. this works out better because
     # it allows us to not have to track position/server ips, especially when users can change them while running (only
-    # applicable to dnxfirewall, but i want the codebase to emulate one another.)
+    # applicable to dnxfirewall, but I want the codebase to emulate one another.)
     def mark_server_down(self, *, remote_server=None):
-        remote_server = remote_server if remote_server else self._relay_conn.remote_ip
+        if (not remote_server):
+            remote_server = self._relay_conn.remote_ip
 
-        for server in self.DNSRelay.dns_servers:
-            if (server['ip'] != remote_server): continue
+        # more likely case is primary server going down so will use as baseline condition
+        primary = self.DNSRelay.dns_servers.primary
 
-            server[self._protocol] = False
+        # if servers could change during runtime, this has a slight race condition potential, but it shouldn't matter
+        # because when changing a server it would be initially set to down (essentially a no-op)
+        server = primary if primary['ip'] == remote_server else self.DNSRelay.dns_servers.secondary
+        server[PROTO.DNS_TLS] = False
 
-            # keeping this under the remote/server ip match condition
-            try:
-                self._relay_conn.sock.close()
-            except:
-                Log.error(f'[{self._relay_conn.remote_ip}] Failed to close socket while marking server down.')
+        try:
+            self._relay_conn.sock.close()
+        except OSError:
+            Log.error(f'[{self._relay_conn.remote_ip}] Failed to close socket while marking server down.')
 
 
 class TLSRelay(ProtoRelay):
     _protocol   = PROTO.DNS_TLS
-    _keepalives = KEEPALIVES_ENABLED
     _dns_packet = ClientRequest.generate_keepalive
 
     __slots__ = (
@@ -135,9 +137,11 @@ class TLSRelay(ProtoRelay):
 
         self._tls_context = tls_context
 
-        self.keepalive_status = threading.Event()
+        # won't run keep alive thread if not enabled at startup
+        if (self.DNSRelay.keepalive_interval):
+            self.keepalive_status = threading.Event()
 
-        threading.Thread(target=self._keepalive_run).start()
+            threading.Thread(target=self._keepalive_run).start()
 
     # iterating over dns server list and calling to create a connection to first available server. this will only happen
     # if a socket connection isn't already established when attempting to send query.
@@ -165,27 +169,22 @@ class TLSRelay(ProtoRelay):
 
     # receive data from server. if dns response will call parse method else will close the socket.
     # NOTE: only one recv handler will be active at a time so the mutable argument is safe from shared state
-    def _recv_handler(self, recv_buffer=[]):
+    def _recv_handler(self, recv_buffer=[], len=len):
         Log.verbose(f'[{self._relay_conn.remote_ip}/{self._protocol.name}] Remote server response handler started.')
+
+        conn_recv = self._relay_conn.recv
+        keepalive_reset = self.keepalive_status.set
+
         recv_buff_append = recv_buffer.append
         recv_buff_clear  = recv_buffer.clear
-        conn_recv = self._relay_conn.recv
-
-        keepalive_reset = self.keepalive_status.set
 
         responder_add = self.DNSRelay.responder.add
 
-        while True:
+        for _ in RUN_FOREVER():
             try:
                 data_from_server = conn_recv(2048)
-            except TimeoutError:
-                # will close the socket as part of the marking process
-                self.mark_server_down()
 
-                Log.error(f'[{self._relay_conn.remote_ip}/{self._protocol.name}] Remote server timeout, marked down.')
-
-                return
-
+            # NOTE: local socket timeout isn't a big deal. will clean up per normal.
             except OSError:
                 break
 
@@ -227,8 +226,9 @@ class TLSRelay(ProtoRelay):
     def _tls_connect(self, tls_server):
 
         Log.verbose(f'[{tls_server}/{self._protocol.name}] Opening secure socket.')
+
         sock = socket(AF_INET, SOCK_STREAM)
-        sock.settimeout(RELAY_TIMEOUT)
+        sock.settimeout(CONNECT_TIMEOUT)
 
         dns_sock = self._tls_context.wrap_socket(sock, server_hostname=tls_server)
         try:
@@ -237,9 +237,11 @@ class TLSRelay(ProtoRelay):
             Log.error(f'[{tls_server}/{self._protocol.name}] Failed to connect. {ose}')
 
         except Exception as E:
-            Log.error(f'[{tls_server}/{self._protocol.name}] TLS context error while attempting to connect. {E}')
+            Log.error(f'[{tls_server}/{self._protocol.name}] While attempting to connect: {E}')
 
         else:
+            sock.settimeout(RELAY_TIMEOUT)
+
             self._relay_conn = RELAY_CONN(
                 tls_server, dns_sock, dns_sock.send, dns_sock.recv, dns_sock.version()
             )
@@ -257,11 +259,7 @@ class TLSRelay(ProtoRelay):
 
         relay_add = self.relay.add
 
-        while True:
-            if (not keepalive_interval):
-                fast_sleep(TEN_SEC)
-
-                continue
+        for _ in RUN_FOREVER():
 
             # returns True if reset which means we do not need to send a keep alive. If timeout is reached will return
             # False notifying that a keepalive should be sent
@@ -330,7 +328,7 @@ class Reachability:
 
     def _tls_reachable(self, secure_server):
         sock = socket(AF_INET, SOCK_STREAM)
-        sock.settimeout(2)
+        sock.settimeout(CONNECT_TIMEOUT)
 
         secure_socket = self._tls_context.wrap_socket(sock, server_hostname=secure_server)
         try:

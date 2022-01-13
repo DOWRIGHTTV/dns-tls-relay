@@ -118,9 +118,9 @@ class ClientRequest:
         self = cls(NULL_ADDR, None)
 
         # hardcoded qtype can change if needed.
-        self.qname    = qname
-        self.qtype      = 1
-        self.cd         = cd
+        self.qname = qname
+        self.qtype = 1
+        self.cd    = cd
 
         return self
 
@@ -131,9 +131,9 @@ class ClientRequest:
         self = cls(NULL_ADDR, None)
 
         # hardcoded qtype can change if needed.
-        self.qname   = qname
-        self.qtype     = 1
-        self.cd        = cd
+        self.qname = qname
+        self.qtype = 1
+        self.cd    = cd
 
         self.generate_dns_query(DNS.KEEPALIVE)
 
@@ -150,7 +150,7 @@ _RESOURCE_RECORD = bytecontainer('resource_record', 'name qtype qclass ttl data'
 _MINIMUM_TTL = long_pack(MINIMUM_TTL)
 _DEFAULT_TTL = long_pack(DEFAULT_TTL)
 
-def ttl_rewrite(data, dns_id):
+def ttl_rewrite(data, dns_id, len=len, min=min, max=max):
     dns_header, dns_payload = data[:12], data[12:]
 
     # converting external/unique dns id back to original dns id of client
@@ -183,7 +183,7 @@ def ttl_rewrite(data, dns_id):
     resource_records = dns_payload[offset + 4:]
 
     # offset is reset to prevent carry over from above.
-    offset, record_cache = 0, []
+    offset, original_ttl, record_cache = 0, 0, []
 
     # parsing standard and authority records
     for record_count in [resource_count, authority_count]:
@@ -197,16 +197,17 @@ def ttl_rewrite(data, dns_id):
             # first, followed by A records so the original_ttl var will be whatever the last A record ttl parsed is.
             # generally all A records have the same ttl. CNAME ttl can differ, but will get clamped with A so will
             # likely end up the same as A records.
-            if (record_type in [DNS.AR, DNS.CNAME]):
-                original_ttl, record.ttl = _get_new_ttl(record)
+            if (record_type in [DNS.A, DNS.CNAME]):
+                original_ttl = long_unpack(record.ttl)[0]
+                record.ttl = max(_MINIMUM_TTL, min(original_ttl, _DEFAULT_TTL))
 
-                send_data += record
+                send_data += long_pack(record)
 
-                # limits A record caching so we arent caching excessive amount of records with the same qname
-                if (len(record_cache) < MAX_A_RECORD_COUNT or record_type != DNS.AR):
+                # limits A record caching so we aren't caching excessive amount of records with the same qname
+                if (len(record_cache) < MAX_A_RECORD_COUNT or record_type != DNS.A):
                     record_cache.append(record)
 
-            # dns system level, mail, and txt records dont need to be clamped and will be relayed to client as is
+            # dns system level, mail, and txt records don't need to be clamped and will be relayed to client as is
             else:
                 send_data += record
 
@@ -240,16 +241,3 @@ def _parse_record(resource_records, total_offset, dns_query):
     total_offset += offset + 10 + dt_len
 
     return btoia(resource_record.qtype), resource_record, total_offset
-
-def _get_new_ttl(record):
-    '''returns dns records original ttl, the rewritten ttl, and the packed form of the rewritten ttl.'''
-    record_ttl = long_unpack(record.ttl)[0]
-    if (record_ttl < MINIMUM_TTL):
-        return record_ttl, _MINIMUM_TTL
-
-    # rewriting ttl to the remaining amount that was calculated from cached packet or to the maximum defined TTL
-    if (record_ttl > DEFAULT_TTL):
-        return record_ttl, _DEFAULT_TTL
-
-    # anything in between the min and max TTL will be retained
-    return record_ttl, long_pack(record_ttl)
