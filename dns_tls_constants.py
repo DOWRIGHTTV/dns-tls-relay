@@ -12,7 +12,7 @@ from collections import namedtuple as _namedtuple
 fast_time = _time.time
 fast_sleep = _time.sleep
 
-RUN_FOREVER = _repeat(1)
+RUN_FOREVER = _partial(_repeat, 1)
 console_log = _partial(print, flush=True)
 hard_out = _partial(_os._exit, 1)
 btoia = _partial(int.from_bytes, byteorder='big', signed=False)
