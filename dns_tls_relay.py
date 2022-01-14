@@ -91,7 +91,8 @@ class DNSRelay:
         registered_socks_get = self._registered_socks.get
         parse_packet = self._parse_packet
 
-        while True:
+        for _ in RUN_FOREVER():
+
             l_socks = epoll_poll()
             for fd, _ in l_socks:
 
@@ -116,8 +117,8 @@ class DNSRelay:
             # if query flag is not set the packet will be assumed malformed and silently dropped
             if (local_domain or client_query.qr != DNS.QUERY): return
 
-            # A and NS records will have a cache pre check before sending out
-            if (client_query.qtype in [DNS.AR, DNS.NS]):
+            # A and NS records will have a cache pre-check before sending out
+            if (client_query.qtype in [DNS.A, DNS.NS]):
 
                 # no further action is required if cache contains matching record, otherwise request will be processed,
                 # then added to queue for secure transmission to remote resolver.
@@ -135,26 +136,28 @@ class DNSRelay:
 
         cached_dom = self._records_cache_search(client_query.qname)
         if (cached_dom.records):
+
             client_query.generate_cached_response(cached_dom)
             self.send_to_client(client_query.send_data, client_query)
 
             return True
 
     @classmethod
-    def _handle_query(cls, client_query):
+    # top_domain will now be set by caller so we don't have to track that within the query object.
+    def _handle_query(cls, client_query, *, top_domain=False):
         new_dns_id = cls._get_unique_id()
-        cls._request_map[new_dns_id] = client_query
-
         client_query.generate_dns_query(new_dns_id)
 
-        TLSRelay.relay.add(client_query) # pylint: disable=no-member
+        cls._request_map[new_dns_id] = (top_domain, client_query)
+
+        TLSRelay.relay.add(client_query)
 
     @classmethod
     def _get_unique_id(cls):
         request_map = cls._request_map
 
         with cls._id_lock:
-            # NOTE: maybe tune this number. under high load collisions could occur and we dont want it to waste time
+            # NOTE: maybe tune this number. under high load collisions could occur and we don't want it to waste time
             # because other requests must wait for this process to complete since we are now using a queue system for
             # while waiting for a decision instead of individual threads.
             for _ in range(100):
@@ -171,7 +174,7 @@ class DNSRelay:
         # dns id is the first 2 bytes in the dns header
         dns_id = short_unpackf(received_data)[0]
 
-        client_query = self._request_map_pop(dns_id, None)
+        top_domain, client_query = self._request_map_pop(dns_id, (None, None))
         if (not client_query):
             return
 
@@ -180,7 +183,7 @@ class DNSRelay:
         except Exception as E:
             Log.error(f'[parser/server response] {E}')
         else:
-            if (not client_query.top_domain):
+            if (not top_domain):
                 self.send_to_client(server_response, client_query)
 
             if (cache_data):
@@ -313,7 +316,9 @@ class DNSCache(dict):
 
         request_handler, dns_packet = self._request_handler, self._dns_packet
         for domain in top_domains:
-            request_handler(dns_packet(domain))
+            request_handler(dns_packet(domain), top_domain=True)
+
+            # rate limited to make it less aggressive
             fast_sleep(.1)
 
         tools.write_cache(top_domains)

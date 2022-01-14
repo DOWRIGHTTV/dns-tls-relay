@@ -6,7 +6,7 @@ from copy import copy
 from collections import deque
 
 from basic_tools import Log
-from dns_tls_constants import MSEC, ONE_SEC, fast_time, fast_sleep, byte_join
+from dns_tls_constants import RUN_FOREVER, MSEC, ONE_SEC, fast_time, fast_sleep, byte_join
 
 
 def bytecontainer(obj_name, field_names):
@@ -171,7 +171,7 @@ def relay_queue(Log, name=None):
         def wrapper(*args):
             Log.system(f'{name}/relay_queue started.')
 
-            while True:
+            for _ in RUN_FOREVER():
                 job_wait()
 
                 # clearing job notification

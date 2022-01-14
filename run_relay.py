@@ -36,6 +36,7 @@ def display_banner():
     print('starting...')
     time.sleep(.5)
 
+
 if (__name__ == '__main__'):
 
     if (os.getuid() or DISABLED):

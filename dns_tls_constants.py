@@ -4,6 +4,7 @@ import os as _os
 import time as _time
 
 from functools import partial as _partial
+from itertools import repeat as _repeat
 from struct import Struct as _Struct
 from enum import IntEnum as _IntEnum
 from collections import namedtuple as _namedtuple
@@ -11,15 +12,15 @@ from collections import namedtuple as _namedtuple
 fast_time = _time.time
 fast_sleep = _time.sleep
 
-write_log = _partial(print, flush=True)
+RUN_FOREVER = _partial(_repeat, 1)
+console_log = _partial(print, flush=True)
 hard_out = _partial(_os._exit, 1)
 btoia = _partial(int.from_bytes, byteorder='big', signed=False)
 
 byte_join = b''.join
 
-RELAY_TIMEOUT = 10
-KEEPALIVE_INTERVAL = 8
-KEEPALIVES_ENABLED = False
+CONNECT_TIMEOUT = 2
+RELAY_TIMEOUT = 30
 
 # general settings
 MINIMUM_TTL = 300
@@ -42,7 +43,7 @@ THIRTY_SEC = 30
 THREE_MIN = 180
 FIVE_MIN = 300
 
-# namedtuples
+# namedtuple
 RELAY_CONN = _namedtuple('relay_conn', 'remote_ip sock send recv version')
 DNS_CACHE = _namedtuple('dns_cache', 'ttl records')
 CACHED_RECORD = _namedtuple('cached_record', 'expire ttl records')
@@ -76,10 +77,9 @@ class PROTO(_IntEnum):
     DNS = 53
     DNS_TLS = 853
 
-
 class DNS(_IntEnum):
     ROOT  = 0
-    AR    = 1
+    A     = 1
     NS    = 2
     CNAME = 5
     SOA   = 6
@@ -89,6 +89,7 @@ class DNS(_IntEnum):
     AAAA  = 28
     OPT   = 41
 
-    QUERY = 0
-    KEEPALIVE = 69
-    RESPONSE = 128
+    QUERY = 0  # alias
+    TOP_DOMAIN = 1  # alias
+    KEEPALIVE  = 69
+    RESPONSE   = 128
