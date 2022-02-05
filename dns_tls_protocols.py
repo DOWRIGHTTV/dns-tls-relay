@@ -269,7 +269,7 @@ class TLSRelay(ProtoRelay):
 
             else:
 
-                relay_add(self._dns_packet(KEEP_ALIVE_DOMAIN))
+                relay_add(self._dns_packet(KEEP_ALIVE_DOMAIN, keepalive=True))
 
                 Log.verbose(f'[keepalive][{keepalive_interval}] Added to relay queue and cleared')
 
