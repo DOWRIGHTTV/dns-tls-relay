@@ -73,23 +73,23 @@ class ClientRequest:
 
         return local_domain
 
-    def generate_cached_response(self, cached_dom):
+    def generate_cached_response(self, cached_domain):
         if (self.send_data):
             raise RuntimeWarning('send data has already been created for this query.')
 
         send_data = bytearray()
 
-        send_data += build_dns_response_hdr(self.dns_id, len(cached_dom.records), rd=self.rd, cd=self.cd)
+        send_data += build_dns_response_hdr(self.dns_id, len(cached_domain.records), rd=self.rd, cd=self.cd)
         send_data += self.question_record
 
-        for record in cached_dom.records:
-            record.ttl = long_pack(cached_dom.ttl)
+        for record in cached_domain.records:
+            record.ttl = long_pack(cached_domain.ttl)
 
             send_data += record
 
         self.send_data = send_data
 
-    def generate_dns_query(self, dns_id):
+    def generate_dns_query(self, dns_id: int) -> None:
         if (self.send_data):
             raise RuntimeWarning('send data has already been created for this query.')
 
@@ -112,7 +112,7 @@ class ClientRequest:
         self.send_data = send_data
 
     @classmethod
-    def generate_local_query(cls, qname, cd=1):
+    def generate_local_query(cls, qname: str, keepalive: bool = False) -> None:
         '''alternate constructor for creating locally generated queries (top domains).'''
 
         self = cls(NULL_ADDR, None)
@@ -120,22 +120,10 @@ class ClientRequest:
         # hardcoded qtype can change if needed.
         self.qname = qname
         self.qtype = 1
-        self.cd    = cd
+        self.cd    = 1
 
-        return self
-
-    @classmethod
-    def generate_keepalive(cls, qname, cd=1):
-        '''alternate construct for creating locally generated keep alive queries.'''
-
-        self = cls(NULL_ADDR, None)
-
-        # hardcoded qtype can change if needed.
-        self.qname = qname
-        self.qtype = 1
-        self.cd    = cd
-
-        self.generate_dns_query(DNS.KEEPALIVE)
+        if (keepalive):
+            self.generate_dns_query(DNS.KEEPALIVE)
 
         return self
 
