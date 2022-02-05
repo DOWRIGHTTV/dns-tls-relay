@@ -121,7 +121,7 @@ class ProtoRelay:
 
 class TLSRelay(ProtoRelay):
     _protocol   = PROTO.DNS_TLS
-    _dns_packet = ClientRequest.generate_keepalive
+    _dns_packet = ClientRequest.generate_local_query
 
     __slots__ = (
         '_tls_context', 'keepalive_status'
@@ -269,7 +269,7 @@ class TLSRelay(ProtoRelay):
 
             else:
 
-                relay_add(self._dns_packet(KEEP_ALIVE_DOMAIN, self._protocol))
+                relay_add(self._dns_packet(KEEP_ALIVE_DOMAIN))
 
                 Log.verbose(f'[keepalive][{keepalive_interval}] Added to relay queue and cleared')
 

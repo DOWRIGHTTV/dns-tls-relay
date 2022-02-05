@@ -112,7 +112,7 @@ class ClientRequest:
         self.send_data = send_data
 
     @classmethod
-    def generate_local_query(cls, qname, cd=1):
+    def generate_local_query(cls, qname):
         '''alternate constructor for creating locally generated queries (top domains).'''
 
         self = cls(NULL_ADDR, None)
@@ -120,22 +120,7 @@ class ClientRequest:
         # hardcoded qtype can change if needed.
         self.qname = qname
         self.qtype = 1
-        self.cd    = cd
-
-        return self
-
-    @classmethod
-    def generate_keepalive(cls, qname, cd=1):
-        '''alternate construct for creating locally generated keep alive queries.'''
-
-        self = cls(NULL_ADDR, None)
-
-        # hardcoded qtype can change if needed.
-        self.qname = qname
-        self.qtype = 1
-        self.cd    = cd
-
-        self.generate_dns_query(DNS.KEEPALIVE)
+        self.cd    = 1
 
         return self
 
